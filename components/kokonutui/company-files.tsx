@@ -1,8 +1,8 @@
 "use client"
 
 import type React from "react"
-import { useState } from "react"
-import { Folder, ChevronRight, FileText, Upload, X, FolderPlus } from "lucide-react"
+import { useState, useEffect } from "react"
+import { Folder, ChevronRight, FileText, Upload, X, Plus, FolderPlus, Download } from "lucide-react"
 import { Card } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
@@ -10,6 +10,7 @@ import { ContextMenu, ContextMenuContent, ContextMenuItem, ContextMenuTrigger } 
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from "@/components/ui/alert-dialog"
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog"
 import { toast } from "sonner"
+import { useCompanyFiles } from "@/lib/company-files-context"
 
 interface FolderItem {
   id: string
@@ -18,20 +19,59 @@ interface FolderItem {
   size?: string
   lastModified?: string
   children?: FolderItem[]
+  fileUrl?: string
 }
 
-const companyStructure: FolderItem[] = [
-  { id: "cac-docs", name: "CAC Documents", type: "folder", children: [] },
-  { id: "company-memo", name: "Company Memorandum", type: "folder", children: [] },
-  { id: "custom-license", name: "Custom License", type: "folder", children: [] },
-  { id: "tax-clearance", name: "Tax Clearance", type: "folder", children: [] },
-  { id: "letterhead", name: "Letterhead", type: "folder", children: [] },
-  { id: "custom-cert", name: "Custom Certificate", type: "folder", children: [] },
+// Company files structure with categories as top-level folders
+const companyFileStructure: FolderItem[] = [
+  {
+    id: "policies",
+    name: "Policies",
+    type: "folder",
+    children: [],
+  },
+  {
+    id: "procedures",
+    name: "Procedures",
+    type: "folder",
+    children: [],
+  },
+  {
+    id: "certificates",
+    name: "Certificates",
+    type: "folder",
+    children: [],
+  },
+  {
+    id: "licenses",
+    name: "Licenses",
+    type: "folder",
+    children: [],
+  },
+  {
+    id: "contracts",
+    name: "Contracts",
+    type: "folder",
+    children: [],
+  },
+  {
+    id: "reports",
+    name: "Reports",
+    type: "folder",
+    children: [],
+  },
+  {
+    id: "other",
+    name: "Other",
+    type: "folder",
+    children: [],
+  },
 ]
 
 export function CompanyFiles() {
+  const { companyFiles, uploadCompanyFile, deleteCompanyFile } = useCompanyFiles()
   const [currentPath, setCurrentPath] = useState<FolderItem[]>([])
-  const [currentFolder, setCurrentFolder] = useState<FolderItem[]>(companyStructure)
+  const [currentFolder, setCurrentFolder] = useState<FolderItem[]>(companyFileStructure)
   const [isUploading, setIsUploading] = useState(false)
   const [isCreatingFolder, setIsCreatingFolder] = useState(false)
   const [newFolderName, setNewFolderName] = useState("")
@@ -52,7 +92,7 @@ export function CompanyFiles() {
       const newPath = currentPath.slice(0, -1)
       setCurrentPath(newPath)
       if (newPath.length === 0) {
-        setCurrentFolder(companyStructure)
+        setCurrentFolder(companyFileStructure)
       } else {
         setCurrentFolder(newPath[newPath.length - 1].children || [])
       }
@@ -62,7 +102,7 @@ export function CompanyFiles() {
   const navigateToBreadcrumb = (index: number) => {
     if (index === -1) {
       setCurrentPath([])
-      setCurrentFolder(companyStructure)
+      setCurrentFolder(companyFileStructure)
     } else {
       const newPath = currentPath.slice(0, index + 1)
       setCurrentPath(newPath)
@@ -70,25 +110,18 @@ export function CompanyFiles() {
     }
   }
 
-  const handleUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
+  const handleUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0]
     if (file && currentPath.length > 0) {
-      const folderId = currentPath[currentPath.length - 1].id
-      const newFile: FolderItem = {
-        id: `${folderId}-file-${Date.now()}`,
-        name: file.name,
-        type: "file",
-        size: `${(file.size / 1024).toFixed(2)} KB`,
-        lastModified: new Date().toLocaleDateString(),
+      try {
+        const category = currentPath[0].name.toLowerCase()
+        await uploadCompanyFile(file, currentPath.map(folder => folder.name).join('/'), category)
+        toast.success(`File "${file.name}" uploaded successfully to ${currentPath[currentPath.length - 1]?.name}`)
+        setIsUploading(false)
+      } catch (error) {
+        console.error('Upload failed:', error)
+        toast.error('Failed to upload file. Please try again.')
       }
-
-      setFiles((prev) => ({
-        ...prev,
-        [folderId]: [...(prev[folderId] || []), newFile],
-      }))
-
-      toast.success(`File "${file.name}" uploaded successfully to ${currentPath[currentPath.length - 1]?.name}`)
-      setIsUploading(false)
     }
   }
 
@@ -137,29 +170,54 @@ export function CompanyFiles() {
     setDeletingItem(item)
   }
 
-  const confirmDelete = () => {
+  const confirmDelete = async () => {
     if (deletingItem) {
-      const folderId = currentPath.length > 0 ? currentPath[currentPath.length - 1].id : "root"
-      setFiles((prev) => ({
-        ...prev,
-        [folderId]: (prev[folderId] || []).filter((item) => item.id !== deletingItem.id),
-      }))
-      toast.success(`"${deletingItem.name}" deleted successfully`)
-      setDeletingItem(null)
+      try {
+        await deleteCompanyFile(deletingItem.id)
+        toast.success(`"${deletingItem.name}" deleted successfully`)
+        setDeletingItem(null)
+      } catch (error) {
+        console.error('Delete failed:', error)
+        toast.error('Failed to delete file. Please try again.')
+      }
     }
   }
+
+  // Combine current folder structure with uploaded files from database
+  const currentFolderPath = currentPath.length > 0 ? currentPath.map(folder => folder.name).join('/') : ''
+  const folderDocuments = companyFiles.filter(doc => {
+    if (currentPath.length === 0) {
+      // At root level, don't show files - only categories
+      return false
+    } else if (currentPath.length === 1) {
+      // In a category folder, show files for that category
+      return doc.category === currentPath[0].name.toLowerCase()
+    } else {
+      // In subfolders, show files that match the full path
+      return doc.folder_path === currentFolderPath
+    }
+  })
 
   const displayItems = [
     ...currentFolder,
     ...(files[currentPath.length > 0 ? currentPath[currentPath.length - 1].id : "root"] || []),
+    ...folderDocuments.map(doc => ({
+      id: doc.id,
+      name: doc.name,
+      type: "file" as const,
+      size: doc.file_size ? `${(doc.file_size / 1024).toFixed(2)} KB` : undefined,
+      lastModified: new Date(doc.created_at).toLocaleDateString(),
+      fileUrl: doc.file_url
+    }))
   ]
 
   return (
     <div className="space-y-6">
+      {/* Header */}
       <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between border-b border-zinc-800 pb-4">
         <div>
           <h1 className="text-2xl font-bold text-white">Company Files</h1>
-          <p className="text-sm text-zinc-400">Corporate documents and company certificates</p>
+          <p className="text-sm text-zinc-400">Manage company documents and files by category</p>
         </div>
         <div className="flex items-center gap-2">
           <Button
@@ -171,6 +229,7 @@ export function CompanyFiles() {
             <FolderPlus className="mr-2 h-4 w-4" />
             New Folder
           </Button>
+          {/* Show upload button only when inside a folder */}
           {currentPath.length > 0 && (
             <Button
               variant="outline"
@@ -185,6 +244,7 @@ export function CompanyFiles() {
         </div>
       </div>
 
+      {/* Upload modal */}
       {isUploading && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm p-4">
           <Card className="w-full max-w-md bg-zinc-900 border-zinc-800 p-6">
@@ -197,8 +257,8 @@ export function CompanyFiles() {
               </Button>
             </div>
             <div className="border-2 border-dashed border-zinc-800 rounded-lg p-8 text-center hover:border-cyan-500/50 transition-colors">
-              <Input type="file" className="hidden" id="file-upload-company" onChange={handleUpload} />
-              <label htmlFor="file-upload-company" className="cursor-pointer">
+              <Input type="file" className="hidden" id="file-upload" onChange={handleUpload} />
+              <label htmlFor="file-upload" className="cursor-pointer">
                 <Upload className="mx-auto h-12 w-12 text-zinc-500 mb-2" />
                 <p className="text-sm text-zinc-400">Click to select file</p>
               </label>
@@ -207,6 +267,7 @@ export function CompanyFiles() {
         </div>
       )}
 
+      {/* New folder creation modal */}
       {isCreatingFolder && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm p-4">
           <Card className="w-full max-w-md bg-zinc-900 border-zinc-800 p-6">
@@ -305,6 +366,7 @@ export function CompanyFiles() {
         </AlertDialogContent>
       </AlertDialog>
 
+      {/* Breadcrumb navigation */}
       {currentPath.length > 0 && (
         <div className="flex items-center gap-2 text-sm">
           <button onClick={() => navigateToBreadcrumb(-1)} className="text-cyan-500 hover:underline">
@@ -315,7 +377,11 @@ export function CompanyFiles() {
               <ChevronRight className="h-4 w-4 text-zinc-600" />
               <button
                 onClick={() => navigateToBreadcrumb(index)}
-                className={index === currentPath.length - 1 ? "text-zinc-400" : "text-cyan-500 hover:underline"}
+                className={
+                  index === currentPath.length - 1
+                    ? "text-zinc-400"
+                    : "text-cyan-500 hover:underline"
+                }
               >
                 {folder.name}
               </button>
@@ -324,12 +390,14 @@ export function CompanyFiles() {
         </div>
       )}
 
+      {/* Back button */}
       {currentPath.length > 0 && (
         <Button variant="outline" size="sm" onClick={navigateBack} className="bg-zinc-900 border-zinc-800">
           Back
         </Button>
       )}
 
+      {/* Folder/file grid */}
       <div className="grid gap-4 grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5">
         {displayItems.map((item) => (
           <ContextMenu key={item.id}>
@@ -345,7 +413,23 @@ export function CompanyFiles() {
                   <h3 className="text-sm font-medium text-zinc-200 group-hover:text-cyan-500 truncate w-full">
                     {item.name}
                   </h3>
-                  {item.type === "file" && item.size && <p className="text-xs text-zinc-500">{item.size}</p>}
+                  {item.type === "file" && item.size && (
+                    <p className="text-xs text-zinc-500">{item.size}</p>
+                  )}
+                  {item.type === "file" && item.fileUrl && (
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      className="mt-1 p-1 h-6 w-6 text-zinc-400 hover:text-cyan-400"
+                      onClick={(e) => {
+                        e.stopPropagation()
+                        window.open(item.fileUrl, '_blank')
+                      }}
+                      title="Download file"
+                    >
+                      <Download className="w-3 h-3" />
+                    </Button>
+                  )}
                 </div>
               </Card>
             </ContextMenuTrigger>

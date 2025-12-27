@@ -1,8 +1,8 @@
 "use client"
 
 import type React from "react"
-import { useState } from "react"
-import { Folder, ChevronRight, FileText, Upload, X, Plus, FolderPlus } from "lucide-react"
+import { useState, useEffect } from "react"
+import { Folder, ChevronRight, FileText, Upload, X, Plus, FolderPlus, Download } from "lucide-react"
 import { Card } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
@@ -10,6 +10,7 @@ import { ContextMenu, ContextMenuContent, ContextMenuItem, ContextMenuTrigger } 
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from "@/components/ui/alert-dialog"
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog"
 import { toast } from "sonner"
+import { useDocuments } from "@/lib/documents-context"
 
 interface FolderItem {
   id: string
@@ -55,6 +56,7 @@ const documentStructure: FolderItem[] = [
 ]
 
 export function Documents() {
+  const { documents, uploadDocument, deleteDocument } = useDocuments()
   const [currentPath, setCurrentPath] = useState<FolderItem[]>([])
   const [currentFolder, setCurrentFolder] = useState<FolderItem[]>(documentStructure)
   const [isUploading, setIsUploading] = useState(false)
@@ -96,26 +98,18 @@ export function Documents() {
     }
   }
 
-  const handleUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
+  const handleUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0]
     if (file && currentPath.length > 0) {
-      // <CHANGE> Add file to the current folder's children
-      const folderId = currentPath[currentPath.length - 1].id
-      const newFile: FolderItem = {
-        id: `${folderId}-file-${Date.now()}`,
-        name: file.name,
-        type: "file",
-        size: `${(file.size / 1024).toFixed(2)} KB`,
-        lastModified: new Date().toLocaleDateString(),
+      try {
+        const folderPath = currentPath.map(folder => folder.name).join('/')
+        await uploadDocument(file, folderPath)
+        toast.success(`File "${file.name}" uploaded successfully to ${currentPath[currentPath.length - 1]?.name}`)
+        setIsUploading(false)
+      } catch (error) {
+        console.error('Upload failed:', error)
+        toast.error('Failed to upload file. Please try again.')
       }
-      
-      setFiles((prev) => ({
-        ...prev,
-        [folderId]: [...(prev[folderId] || []), newFile],
-      }))
-
-      toast.success(`File "${file.name}" uploaded successfully to ${currentPath[currentPath.length - 1]?.name}`)
-      setIsUploading(false)
     }
   }
 
@@ -165,22 +159,34 @@ export function Documents() {
     setDeletingItem(item)
   }
 
-  const confirmDelete = () => {
+  const confirmDelete = async () => {
     if (deletingItem) {
-      const folderId = currentPath.length > 0 ? currentPath[currentPath.length - 1].id : "root"
-      setFiles((prev) => ({
-        ...prev,
-        [folderId]: (prev[folderId] || []).filter((item) => item.id !== deletingItem.id),
-      }))
-      toast.success(`"${deletingItem.name}" deleted successfully`)
-      setDeletingItem(null)
+      try {
+        await deleteDocument(deletingItem.id)
+        toast.success(`"${deletingItem.name}" deleted successfully`)
+        setDeletingItem(null)
+      } catch (error) {
+        console.error('Delete failed:', error)
+        toast.error('Failed to delete file. Please try again.')
+      }
     }
   }
 
-  // <CHANGE> Combine current folder structure with uploaded files
+  // <CHANGE> Combine current folder structure with uploaded files from database
+  const currentFolderPath = currentPath.length > 0 ? currentPath.map(folder => folder.name).join('/') : ''
+  const folderDocuments = documents.filter(doc => doc.folder_path === currentFolderPath)
+
   const displayItems = [
     ...currentFolder,
     ...(files[currentPath.length > 0 ? currentPath[currentPath.length - 1].id : "root"] || []),
+    ...folderDocuments.map(doc => ({
+      id: doc.id,
+      name: doc.name,
+      type: "file" as const,
+      size: doc.file_size ? `${(doc.file_size / 1024).toFixed(2)} KB` : undefined,
+      lastModified: new Date(doc.created_at).toLocaleDateString(),
+      fileUrl: doc.file_url
+    }))
   ]
 
   return (
@@ -387,6 +393,20 @@ export function Documents() {
                   </h3>
                   {item.type === "file" && item.size && (
                     <p className="text-xs text-zinc-500">{item.size}</p>
+                  )}
+                  {item.type === "file" && item.fileUrl && (
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      className="mt-1 p-1 h-6 w-6 text-zinc-400 hover:text-cyan-400"
+                      onClick={(e) => {
+                        e.stopPropagation()
+                        window.open(item.fileUrl, '_blank')
+                      }}
+                      title="Download file"
+                    >
+                      <Download className="w-3 h-3" />
+                    </Button>
                   )}
                 </div>
               </Card>

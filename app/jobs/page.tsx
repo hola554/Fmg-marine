@@ -1,8 +1,8 @@
 'use client'
 
-import { useState, useCallback, useRef } from 'react'
+import { useState, useCallback, useRef, useEffect } from 'react'
 import { useToast } from '@/hooks/use-toast'
-import { useJobs } from '@/lib/jobs-context'
+import { useJobs, Job } from '@/lib/jobs-context'
 import Layout from "@/components/kokonutui/layout"
 import {
   Table,
@@ -43,17 +43,41 @@ export default function JobsPage() {
   const { jobs, loading, updateStatus, updateEta, updateTerminal, updateConsignee, updateBlNumber, updateContainerSize, addJob, deleteJob, refreshJobs } = useJobs()
   const { toast } = useToast()
 
+  // Local state for immediate input feedback
+  const [localJobs, setLocalJobs] = useState<Job[]>([])
+
+  // Sync local state with jobs from context
+  useEffect(() => {
+    setLocalJobs(jobs)
+  }, [jobs])
+
   // Create debounced versions of update functions with shorter delay
   const debouncedUpdateConsignee = useCallback(
-    debounce(async (sn: number, value: string) => await updateConsignee(sn, value), 100),
+    debounce(async (sn: number, value: string) => {
+      await updateConsignee(sn, value)
+      // Update local state immediately after successful update
+      setLocalJobs(prev => prev.map(job =>
+        job.sn === sn ? { ...job, consignee: value } : job
+      ))
+    }, 300),
     [updateConsignee]
   )
   const debouncedUpdateBlNumber = useCallback(
-    debounce(async (sn: number, value: string) => await updateBlNumber(sn, value), 100),
+    debounce(async (sn: number, value: string) => {
+      await updateBlNumber(sn, value)
+      setLocalJobs(prev => prev.map(job =>
+        job.sn === sn ? { ...job, blNumber: value } : job
+      ))
+    }, 300),
     [updateBlNumber]
   )
   const debouncedUpdateContainerSize = useCallback(
-    debounce(async (sn: number, value: string) => await updateContainerSize(sn, value), 100),
+    debounce(async (sn: number, value: string) => {
+      await updateContainerSize(sn, value)
+      setLocalJobs(prev => prev.map(job =>
+        job.sn === sn ? { ...job, containerSize: value } : job
+      ))
+    }, 300),
     [updateContainerSize]
   )
 
@@ -164,7 +188,7 @@ export default function JobsPage() {
   }
 
   const addNewJob = async () => {
-    const newSn = jobs.length > 0 ? Math.max(...jobs.map(job => job.sn)) + 1 : 1
+    const newSn = localJobs.length > 0 ? Math.max(...localJobs.map(job => job.sn)) + 1 : 1
     await addJob({
       sn: newSn,
       consignee: "",
@@ -239,21 +263,39 @@ export default function JobsPage() {
                   <TableCell>
                     <Input
                       value={job.consignee}
-                      onChange={(e) => debouncedUpdateConsignee(job.sn, e.target.value)}
+                      onChange={(e) => {
+                        // Update local state immediately for instant feedback
+                        setLocalJobs(prev => prev.map(j =>
+                          j.sn === job.sn ? { ...j, consignee: e.target.value } : j
+                        ))
+                        debouncedUpdateConsignee(job.sn, e.target.value)
+                      }}
                       className="w-[120px] h-9 rounded-lg"
                     />
                   </TableCell>
                   <TableCell>
                     <Input
                       value={job.blNumber}
-                      onChange={(e) => debouncedUpdateBlNumber(job.sn, e.target.value)}
+                      onChange={(e) => {
+                        // Update local state immediately for instant feedback
+                        setLocalJobs(prev => prev.map(j =>
+                          j.sn === job.sn ? { ...j, blNumber: e.target.value } : j
+                        ))
+                        debouncedUpdateBlNumber(job.sn, e.target.value)
+                      }}
                       className="w-[120px] h-9 rounded-lg"
                     />
                   </TableCell>
                   <TableCell>
                     <Input
                       value={job.containerSize}
-                      onChange={(e) => debouncedUpdateContainerSize(job.sn, e.target.value)}
+                      onChange={(e) => {
+                        // Update local state immediately for instant feedback
+                        setLocalJobs(prev => prev.map(j =>
+                          j.sn === job.sn ? { ...j, containerSize: e.target.value } : j
+                        ))
+                        debouncedUpdateContainerSize(job.sn, e.target.value)
+                      }}
                       className="w-[80px] h-9 rounded-lg"
                     />
                   </TableCell>

@@ -4,6 +4,8 @@ import "./globals.css"
 import { ThemeProvider } from "@/components/theme-provider"
 import { Toaster } from "@/components/ui/toaster"
 import { JobsProvider } from "@/lib/jobs-context"
+import { DocumentsProvider } from "@/lib/documents-context"
+import { CompanyFilesProvider } from "@/lib/company-files-context"
 
 const inter = Inter({ subsets: ["latin"] })
 
@@ -22,9 +24,13 @@ export default function RootLayout({
     <html lang="en" suppressHydrationWarning>
       <body className={inter.className}>
         <JobsProvider>
-          <ThemeProvider attribute="class" defaultTheme="dark" enableSystem={false} disableTransitionOnChange>
-            {children}
-          </ThemeProvider>
+          <DocumentsProvider>
+            <CompanyFilesProvider>
+              <ThemeProvider attribute="class" defaultTheme="dark" enableSystem={false} disableTransitionOnChange>
+                {children}
+              </ThemeProvider>
+            </CompanyFilesProvider>
+          </DocumentsProvider>
         </JobsProvider>
         <Toaster />
       </body>

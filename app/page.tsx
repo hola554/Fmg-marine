@@ -1,10 +1,14 @@
-import Layout from "@/components/kokonutui/layout"
-import Dashboard from "@/components/kokonutui/dashboard"
+'use client'
+
+import { useRouter } from 'next/navigation'
+import { useEffect } from 'react'
 
 export default function Home() {
-  return (
-    <Layout>
-      <Dashboard />
-    </Layout>
-  )
+  const router = useRouter()
+
+  useEffect(() => {
+    router.push('/auth/login')
+  }, [router])
+
+  return null
 }

@@ -1,7 +1,7 @@
 'use client'
 
-import { useState } from 'react'
 import Layout from "@/components/kokonutui/layout"
+import { useJobs } from '@/lib/jobs-context'
 import {
   Table,
   TableBody,
@@ -18,29 +18,8 @@ import {
   SelectValue,
 } from "@/components/ui/select"
 
-type Job = {
-  sn: number
-  consignee: string
-  blNumber: string
-  containerSize: string
-  terminal: string
-  status: string
-  eta: Date | undefined
-  refundStatus: 'pending' | 'collected'
-}
-
-const initialJobs: Job[] = [
-  { sn: 1, consignee: "ABC Corp", blNumber: "BL123456", containerSize: "20ft", terminal: "Apapa", status: "pending", eta: new Date(), refundStatus: 'pending' },
-  { sn: 2, consignee: "XYZ Ltd", blNumber: "BL789012", containerSize: "40ft", terminal: "TICT", status: "done", eta: new Date(Date.now() + 86400000), refundStatus: 'pending' },
-  { sn: 3, consignee: "DEF Inc", blNumber: "BL345678", containerSize: "20ft", terminal: "Sifax terminal", status: "pending", eta: undefined, refundStatus: 'pending' },
-]
-
 export default function RefundPage() {
-  const [jobs, setJobs] = useState<Job[]>(initialJobs)
-
-  const updateRefundStatus = (sn: number, refundStatus: 'pending' | 'collected') => {
-    setJobs(jobs.map(job => job.sn === sn ? { ...job, refundStatus } : job))
-  }
+  const { jobs, loading, updateRefundStatus } = useJobs()
 
   const doneJobs = jobs.filter(job => job.status === 'done')
 

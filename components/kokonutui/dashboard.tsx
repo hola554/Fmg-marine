@@ -1,30 +1,14 @@
 'use client'
 
-import React, { useState } from "react"
+import React from "react"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
-import { CalendarDays, Users, FileText, TrendingUp, CheckCircle, Clock, DollarSign } from "lucide-react"
-
-type Job = {
-  sn: number
-  consignee: string
-  blNumber: string
-  containerSize: string
-  terminal: string
-  status: string
-  eta: Date | undefined
-  refundStatus: 'pending' | 'collected'
-}
-
-const initialJobs: Job[] = [
-  { sn: 1, consignee: "ABC Corp", blNumber: "BL123456", containerSize: "20ft", terminal: "Apapa", status: "pending", eta: new Date(), refundStatus: 'pending' },
-  { sn: 2, consignee: "XYZ Ltd", blNumber: "BL789012", containerSize: "40ft", terminal: "TICT", status: "done", eta: new Date(Date.now() + 86400000), refundStatus: 'pending' },
-  { sn: 3, consignee: "DEF Inc", blNumber: "BL345678", containerSize: "20ft", terminal: "Sifax terminal", status: "pending", eta: undefined, refundStatus: 'pending' },
-]
+import { CalendarDays, Users, FileText, TrendingUp, CheckCircle, Clock } from "lucide-react"
+import { useJobs } from "@/lib/jobs-context"
 
 export default function Dashboard() {
-  const [jobs] = useState<Job[]>(initialJobs)
+  const { jobs, loading } = useJobs()
 
   const totalJobs = jobs.length
   const activeJobs = jobs.filter(job => job.status === 'pending').length

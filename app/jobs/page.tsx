@@ -234,7 +234,7 @@ export default function JobsPage() {
               </TableHeader>
               <TableBody>
                 {jobs.map((job) => (
-                <TableRow key={job.sn}>
+                <TableRow key={job.id}>
                   <TableCell>{job.sn}</TableCell>
                   <TableCell>
                     <Input

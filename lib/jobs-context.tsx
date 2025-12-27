@@ -16,6 +16,7 @@ export type Job = {
   refundStatus: 'pending' | 'collected'
   files?: Array<{
     name: string
+    storageName: string
     url: string
     size: number
     type: string
@@ -25,8 +26,6 @@ export type Job = {
   created_at?: string
   updated_at?: string
 }
-
-
 
 interface JobsContextType {
   jobs: Job[]
@@ -79,7 +78,6 @@ export const JobsProvider: React.FC<JobsProviderProps> = ({ children }) => {
 
       if (error) {
         console.error('Error fetching jobs:', error)
-        // Don't reset to demo data if there's an error - keep current state
         return
       }
 
@@ -95,7 +93,6 @@ export const JobsProvider: React.FC<JobsProviderProps> = ({ children }) => {
       setJobs(formattedJobs)
     } catch (error) {
       console.error('Error refreshing jobs:', error)
-      // Don't reset state on error - keep current jobs
     } finally {
       setLoading(false)
     }
@@ -105,7 +102,16 @@ export const JobsProvider: React.FC<JobsProviderProps> = ({ children }) => {
     refreshJobs()
   }, [])
 
+  // FIXED: Update local state immediately, save to DB in background
   const updateStatus = async (sn: number, status: string) => {
+    // Update UI immediately
+    setJobs(prevJobs => 
+      prevJobs.map(job => 
+        job.sn === sn ? { ...job, status } : job
+      )
+    )
+
+    // Save to database in background
     try {
       const { data: { user } } = await supabase.auth.getUser()
       if (!user) return
@@ -118,16 +124,22 @@ export const JobsProvider: React.FC<JobsProviderProps> = ({ children }) => {
 
       if (error) {
         console.error('Error updating status:', error)
-        return
+        // Revert on error
+        await refreshJobs()
       }
-
-      await refreshJobs()
     } catch (error) {
       console.error('Error updating status:', error)
+      await refreshJobs()
     }
   }
 
   const updateEta = async (sn: number, eta: Date | undefined) => {
+    setJobs(prevJobs => 
+      prevJobs.map(job => 
+        job.sn === sn ? { ...job, eta } : job
+      )
+    )
+
     try {
       const { data: { user } } = await supabase.auth.getUser()
       if (!user) return
@@ -140,16 +152,21 @@ export const JobsProvider: React.FC<JobsProviderProps> = ({ children }) => {
 
       if (error) {
         console.error('Error updating ETA:', error)
-        return
+        await refreshJobs()
       }
-
-      await refreshJobs()
     } catch (error) {
       console.error('Error updating ETA:', error)
+      await refreshJobs()
     }
   }
 
   const updateTerminal = async (sn: number, terminal: string) => {
+    setJobs(prevJobs => 
+      prevJobs.map(job => 
+        job.sn === sn ? { ...job, terminal } : job
+      )
+    )
+
     try {
       const { data: { user } } = await supabase.auth.getUser()
       if (!user) return
@@ -162,16 +179,21 @@ export const JobsProvider: React.FC<JobsProviderProps> = ({ children }) => {
 
       if (error) {
         console.error('Error updating terminal:', error)
-        return
+        await refreshJobs()
       }
-
-      await refreshJobs()
     } catch (error) {
       console.error('Error updating terminal:', error)
+      await refreshJobs()
     }
   }
 
   const updateConsignee = async (sn: number, consignee: string) => {
+    setJobs(prevJobs => 
+      prevJobs.map(job => 
+        job.sn === sn ? { ...job, consignee } : job
+      )
+    )
+
     try {
       const { data: { user } } = await supabase.auth.getUser()
       if (!user) return
@@ -184,16 +206,21 @@ export const JobsProvider: React.FC<JobsProviderProps> = ({ children }) => {
 
       if (error) {
         console.error('Error updating consignee:', error)
-        return
+        await refreshJobs()
       }
-
-      await refreshJobs()
     } catch (error) {
       console.error('Error updating consignee:', error)
+      await refreshJobs()
     }
   }
 
   const updateBlNumber = async (sn: number, blNumber: string) => {
+    setJobs(prevJobs => 
+      prevJobs.map(job => 
+        job.sn === sn ? { ...job, blNumber } : job
+      )
+    )
+
     try {
       const { data: { user } } = await supabase.auth.getUser()
       if (!user) return
@@ -206,16 +233,21 @@ export const JobsProvider: React.FC<JobsProviderProps> = ({ children }) => {
 
       if (error) {
         console.error('Error updating BL number:', error)
-        return
+        await refreshJobs()
       }
-
-      await refreshJobs()
     } catch (error) {
       console.error('Error updating BL number:', error)
+      await refreshJobs()
     }
   }
 
   const updateContainerSize = async (sn: number, containerSize: string) => {
+    setJobs(prevJobs => 
+      prevJobs.map(job => 
+        job.sn === sn ? { ...job, containerSize } : job
+      )
+    )
+
     try {
       const { data: { user } } = await supabase.auth.getUser()
       if (!user) return
@@ -228,16 +260,21 @@ export const JobsProvider: React.FC<JobsProviderProps> = ({ children }) => {
 
       if (error) {
         console.error('Error updating container size:', error)
-        return
+        await refreshJobs()
       }
-
-      await refreshJobs()
     } catch (error) {
       console.error('Error updating container size:', error)
+      await refreshJobs()
     }
   }
 
   const updateRefundStatus = async (sn: number, refundStatus: 'pending' | 'collected') => {
+    setJobs(prevJobs => 
+      prevJobs.map(job => 
+        job.sn === sn ? { ...job, refundStatus } : job
+      )
+    )
+
     try {
       const { data: { user } } = await supabase.auth.getUser()
       if (!user) return
@@ -250,12 +287,11 @@ export const JobsProvider: React.FC<JobsProviderProps> = ({ children }) => {
 
       if (error) {
         console.error('Error updating refund status:', error)
-        return
+        await refreshJobs()
       }
-
-      await refreshJobs()
     } catch (error) {
       console.error('Error updating refund status:', error)
+      await refreshJobs()
     }
   }
 

@@ -31,27 +31,14 @@ export default function Sidebar() {
     icon: any
     children: React.ReactNode
   }) {
-    const [isLoading, setIsLoading] = useState(false)
-
-    const handleClick = () => {
-      setIsLoading(true)
-      handleNavigation()
-      // Reset loading state after navigation
-      setTimeout(() => setIsLoading(false), 1000)
-    }
-
     return (
       <Link
         href={href}
         prefetch={true}
-        onClick={handleClick}
+        onClick={handleNavigation}
         className="flex items-center px-3 py-2 text-sm rounded-md transition-colors text-gray-600 dark:text-gray-300 hover:text-gray-900 dark:hover:text-white hover:bg-gray-50 dark:hover:bg-[#1F1F23] disabled:opacity-50"
       >
-        {isLoading ? (
-          <div className="h-4 w-4 mr-3 flex-shrink-0 animate-spin rounded-full border-2 border-gray-300 border-t-gray-600 dark:border-gray-600 dark:border-t-gray-300" />
-        ) : (
-          <Icon className="h-4 w-4 mr-3 flex-shrink-0" />
-        )}
+        <Icon className="h-4 w-4 mr-3 flex-shrink-0" />
         {children}
       </Link>
     )

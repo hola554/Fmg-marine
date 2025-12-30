@@ -1,6 +1,6 @@
 'use client'
 
-import { useState } from 'react'
+import { useState, useCallback, useRef, useEffect } from 'react'
 import { useToast } from '@/hooks/use-toast'
 import { useJobs, Job } from '@/lib/jobs-context'
 import Layout from "@/components/kokonutui/layout"
@@ -30,6 +30,22 @@ import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, 
 import { format } from "date-fns"
 import { createClient } from "@/lib/supabase/client"
 
+// Debounce hook
+const useDebouncedCallback = (callback: (...args: any[]) => void, delay: number) => {
+  const timeoutRef = useRef<NodeJS.Timeout>()
+  const callbackRef = useRef(callback)
+
+  // Update the callback ref when callback changes
+  useEffect(() => {
+    callbackRef.current = callback
+  }, [callback])
+
+  return useCallback((...args: any[]) => {
+    if (timeoutRef.current) clearTimeout(timeoutRef.current)
+    timeoutRef.current = setTimeout(() => callbackRef.current(...args), delay)
+  }, [delay])
+}
+
 export default function JobsPage() {
   const {
     jobs,
@@ -46,6 +62,33 @@ export default function JobsPage() {
   } = useJobs()
   const { toast } = useToast()
   const [searchQuery, setSearchQuery] = useState('')
+
+  // Local state for input fields to provide immediate feedback
+  const [localConsignee, setLocalConsignee] = useState<Record<number, string>>({})
+  const [localBlNumber, setLocalBlNumber] = useState<Record<number, string>>({})
+  const [localContainerSize, setLocalContainerSize] = useState<Record<number, string>>({})
+
+  // Initialize local state when jobs change
+  useEffect(() => {
+    const newConsignee: Record<number, string> = {}
+    const newBlNumber: Record<number, string> = {}
+    const newContainerSize: Record<number, string> = {}
+
+    jobs.forEach(job => {
+      newConsignee[job.sn] = job.consignee || ''
+      newBlNumber[job.sn] = job.blNumber || ''
+      newContainerSize[job.sn] = job.containerSize || ''
+    })
+
+    setLocalConsignee(newConsignee)
+    setLocalBlNumber(newBlNumber)
+    setLocalContainerSize(newContainerSize)
+  }, [jobs])
+
+  // Debounced update functions
+  const debouncedUpdateConsignee = useDebouncedCallback(updateConsignee, 500)
+  const debouncedUpdateBlNumber = useDebouncedCallback(updateBlNumber, 500)
+  const debouncedUpdateContainerSize = useDebouncedCallback(updateContainerSize, 500)
 
   // Filter jobs based on search query
   const filteredJobs = jobs.filter(job => {
@@ -320,24 +363,36 @@ export default function JobsPage() {
                     <TableCell className="font-medium">{job.sn}</TableCell>
                     <TableCell>
                       <Input
-                        value={job.consignee}
-                        onChange={(e) => updateConsignee(job.sn, e.target.value)}
+                        value={localConsignee[job.sn] || ''}
+                        onChange={(e) => {
+                          const value = e.target.value
+                          setLocalConsignee(prev => ({ ...prev, [job.sn]: value }))
+                          debouncedUpdateConsignee(job.sn, value)
+                        }}
                         className="w-[140px] h-9 rounded-lg"
                         placeholder="Consignee name"
                       />
                     </TableCell>
                     <TableCell>
                       <Input
-                        value={job.blNumber}
-                        onChange={(e) => updateBlNumber(job.sn, e.target.value)}
+                        value={localBlNumber[job.sn] || ''}
+                        onChange={(e) => {
+                          const value = e.target.value
+                          setLocalBlNumber(prev => ({ ...prev, [job.sn]: value }))
+                          debouncedUpdateBlNumber(job.sn, value)
+                        }}
                         className="w-[140px] h-9 rounded-lg"
                         placeholder="BL number"
                       />
                     </TableCell>
                     <TableCell>
                       <Input
-                        value={job.containerSize}
-                        onChange={(e) => updateContainerSize(job.sn, e.target.value)}
+                        value={localContainerSize[job.sn] || ''}
+                        onChange={(e) => {
+                          const value = e.target.value
+                          setLocalContainerSize(prev => ({ ...prev, [job.sn]: value }))
+                          debouncedUpdateContainerSize(job.sn, value)
+                        }}
                         className="w-[100px] h-9 rounded-lg"
                         placeholder="Size"
                       />

@@ -60,9 +60,20 @@ export const JobsProvider: React.FC<JobsProviderProps> = ({ children }) => {
   const [jobs, setJobs] = useState<Job[]>([])
   const [loading, setLoading] = useState(true)
   const router = useRouter()
-  const supabase = createClient()
+
+  // Check if Supabase is configured
+  const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL
+  const supabaseAnonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY
+  const isSupabaseConfigured = supabaseUrl && supabaseAnonKey
+
+  const supabase = isSupabaseConfigured ? createClient() : null
 
   const refreshJobs = async () => {
+    if (!isSupabaseConfigured || !supabase) {
+      setLoading(false)
+      return
+    }
+
     try {
       const { data: { user } } = await supabase.auth.getUser()
       if (!user) {
@@ -105,11 +116,13 @@ export const JobsProvider: React.FC<JobsProviderProps> = ({ children }) => {
   // FIXED: Update local state immediately, save to DB in background
   const updateStatus = async (sn: number, status: string) => {
     // Update UI immediately
-    setJobs(prevJobs => 
-      prevJobs.map(job => 
+    setJobs(prevJobs =>
+      prevJobs.map(job =>
         job.sn === sn ? { ...job, status } : job
       )
     )
+
+    if (!isSupabaseConfigured || !supabase) return
 
     // Save to database in background
     try {
@@ -134,11 +147,13 @@ export const JobsProvider: React.FC<JobsProviderProps> = ({ children }) => {
   }
 
   const updateEta = async (sn: number, eta: Date | undefined) => {
-    setJobs(prevJobs => 
-      prevJobs.map(job => 
+    setJobs(prevJobs =>
+      prevJobs.map(job =>
         job.sn === sn ? { ...job, eta } : job
       )
     )
+
+    if (!isSupabaseConfigured || !supabase) return
 
     try {
       const { data: { user } } = await supabase.auth.getUser()
@@ -161,11 +176,13 @@ export const JobsProvider: React.FC<JobsProviderProps> = ({ children }) => {
   }
 
   const updateTerminal = async (sn: number, terminal: string) => {
-    setJobs(prevJobs => 
-      prevJobs.map(job => 
+    setJobs(prevJobs =>
+      prevJobs.map(job =>
         job.sn === sn ? { ...job, terminal } : job
       )
     )
+
+    if (!isSupabaseConfigured || !supabase) return
 
     try {
       const { data: { user } } = await supabase.auth.getUser()
@@ -188,11 +205,13 @@ export const JobsProvider: React.FC<JobsProviderProps> = ({ children }) => {
   }
 
   const updateConsignee = async (sn: number, consignee: string) => {
-    setJobs(prevJobs => 
-      prevJobs.map(job => 
+    setJobs(prevJobs =>
+      prevJobs.map(job =>
         job.sn === sn ? { ...job, consignee } : job
       )
     )
+
+    if (!isSupabaseConfigured || !supabase) return
 
     try {
       const { data: { user } } = await supabase.auth.getUser()
@@ -215,11 +234,13 @@ export const JobsProvider: React.FC<JobsProviderProps> = ({ children }) => {
   }
 
   const updateBlNumber = async (sn: number, blNumber: string) => {
-    setJobs(prevJobs => 
-      prevJobs.map(job => 
+    setJobs(prevJobs =>
+      prevJobs.map(job =>
         job.sn === sn ? { ...job, blNumber } : job
       )
     )
+
+    if (!isSupabaseConfigured || !supabase) return
 
     try {
       const { data: { user } } = await supabase.auth.getUser()
@@ -242,11 +263,13 @@ export const JobsProvider: React.FC<JobsProviderProps> = ({ children }) => {
   }
 
   const updateContainerSize = async (sn: number, containerSize: string) => {
-    setJobs(prevJobs => 
-      prevJobs.map(job => 
+    setJobs(prevJobs =>
+      prevJobs.map(job =>
         job.sn === sn ? { ...job, containerSize } : job
       )
     )
+
+    if (!isSupabaseConfigured || !supabase) return
 
     try {
       const { data: { user } } = await supabase.auth.getUser()
@@ -269,11 +292,13 @@ export const JobsProvider: React.FC<JobsProviderProps> = ({ children }) => {
   }
 
   const updateRefundStatus = async (sn: number, refundStatus: 'pending' | 'collected') => {
-    setJobs(prevJobs => 
-      prevJobs.map(job => 
+    setJobs(prevJobs =>
+      prevJobs.map(job =>
         job.sn === sn ? { ...job, refundStatus } : job
       )
     )
+
+    if (!isSupabaseConfigured || !supabase) return
 
     try {
       const { data: { user } } = await supabase.auth.getUser()
@@ -296,11 +321,28 @@ export const JobsProvider: React.FC<JobsProviderProps> = ({ children }) => {
   }
 
   const addJob = async (jobData: Omit<Job, 'id' | 'user_id' | 'created_at' | 'updated_at'>) => {
+    if (!isSupabaseConfigured || !supabase) return
+
+    // Optimistically update UI immediately
+    const optimisticJob: Job = {
+      ...jobData,
+      id: `temp-${Date.now()}`, // Temporary ID
+      user_id: 'temp',
+      created_at: new Date().toISOString(),
+      updated_at: new Date().toISOString(),
+      files: []
+    }
+    setJobs(prevJobs => [...prevJobs, optimisticJob])
+
     try {
       const { data: { user } } = await supabase.auth.getUser()
-      if (!user) return
+      if (!user) {
+        // Revert optimistic update if no user
+        setJobs(prevJobs => prevJobs.filter(job => job.id !== optimisticJob.id))
+        return
+      }
 
-      const { error } = await supabase
+      const { data, error } = await supabase
         .from('jobs')
         .insert({
           sn: jobData.sn,
@@ -313,19 +355,40 @@ export const JobsProvider: React.FC<JobsProviderProps> = ({ children }) => {
           refund_status: jobData.refundStatus,
           user_id: user.id
         })
+        .select()
+        .single()
 
       if (error) {
         console.error('Error adding job:', error)
+        // Revert optimistic update on error
+        setJobs(prevJobs => prevJobs.filter(job => job.id !== optimisticJob.id))
         return
       }
 
-      await refreshJobs()
+      // Replace optimistic job with real data
+      if (data) {
+        const realJob: Job = {
+          ...data,
+          blNumber: data.bl_number,
+          containerSize: data.container_size,
+          refundStatus: data.refund_status,
+          eta: data.eta ? new Date(data.eta) : undefined,
+          files: data.files || []
+        }
+        setJobs(prevJobs => prevJobs.map(job =>
+          job.id === optimisticJob.id ? realJob : job
+        ))
+      }
     } catch (error) {
       console.error('Error adding job:', error)
+      // Revert optimistic update on error
+      setJobs(prevJobs => prevJobs.filter(job => job.id !== optimisticJob.id))
     }
   }
 
   const deleteJob = async (sn: number) => {
+    if (!isSupabaseConfigured || !supabase) return
+
     try {
       const { data: { user } } = await supabase.auth.getUser()
       if (!user) return

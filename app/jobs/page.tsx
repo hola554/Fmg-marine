@@ -35,7 +35,6 @@ const useDebouncedCallback = (callback: (...args: any[]) => void, delay: number)
   const timeoutRef = useRef<NodeJS.Timeout>()
   const callbackRef = useRef(callback)
 
-  // Update the callback ref when callback changes
   useEffect(() => {
     callbackRef.current = callback
   }, [callback])
@@ -44,6 +43,19 @@ const useDebouncedCallback = (callback: (...args: any[]) => void, delay: number)
     if (timeoutRef.current) clearTimeout(timeoutRef.current)
     timeoutRef.current = setTimeout(() => callbackRef.current(...args), delay)
   }, [delay])
+}
+
+// Generate a fresh signed URL on demand (1 hour expiry is enough for a single session)
+const getFreshSignedUrl = async (storagePath: string): Promise<string | null> => {
+  const supabase = createClient()
+  const { data, error } = await supabase.storage
+    .from('documents')
+    .createSignedUrl(storagePath, 60 * 60) // 1 hour — only used for this click
+  if (error || !data?.signedUrl) {
+    console.error('Failed to get signed URL:', error)
+    return null
+  }
+  return data.signedUrl
 }
 
 export default function JobsPage() {
@@ -63,12 +75,10 @@ export default function JobsPage() {
   const { toast } = useToast()
   const [searchQuery, setSearchQuery] = useState('')
 
-  // Local state for input fields to provide immediate feedback
   const [localConsignee, setLocalConsignee] = useState<Record<number, string>>({})
   const [localBlNumber, setLocalBlNumber] = useState<Record<number, string>>({})
   const [localContainerSize, setLocalContainerSize] = useState<Record<number, string>>({})
 
-  // Initialize local state when jobs change
   useEffect(() => {
     const newConsignee: Record<number, string> = {}
     const newBlNumber: Record<number, string> = {}
@@ -85,12 +95,10 @@ export default function JobsPage() {
     setLocalContainerSize(newContainerSize)
   }, [jobs])
 
-  // Debounced update functions
   const debouncedUpdateConsignee = useDebouncedCallback(updateConsignee, 500)
   const debouncedUpdateBlNumber = useDebouncedCallback(updateBlNumber, 500)
   const debouncedUpdateContainerSize = useDebouncedCallback(updateContainerSize, 500)
 
-  // Filter jobs based on search query
   const filteredJobs = jobs.filter(job => {
     if (!searchQuery) return true
     const query = searchQuery.toLowerCase()
@@ -122,10 +130,10 @@ export default function JobsPage() {
           for (let i = 0; i < files.length; i++) {
             const file = files[i]
             const fileExt = file.name.split('.').pop()
-            const fileName = `${Date.now()}-${Math.random().toString(36).substring(2)}.${fileExt}`
-            const filePath = `jobs/${sn}/${fileName}`
+            const storageName = `${Date.now()}-${Math.random().toString(36).substring(2)}.${fileExt}`
+            const filePath = `jobs/${sn}/${storageName}`
 
-            const { data: uploadData, error: uploadError } = await supabase.storage
+            const { error: uploadError } = await supabase.storage
               .from('documents')
               .upload(filePath, file)
 
@@ -139,24 +147,12 @@ export default function JobsPage() {
               continue
             }
 
-            const { data: urlData, error: signedUrlError } = await supabase.storage
-              .from('documents')
-              .createSignedUrl(filePath, 60 * 60 * 24 * 7)
-
-            if (signedUrlError || !urlData?.signedUrl) {
-              console.error('Failed to get signed URL for:', filePath, signedUrlError)
-              toast({
-                title: "Upload Error",
-                description: `Failed to generate access URL for ${file.name}`,
-                variant: "destructive",
-              })
-              continue
-            }
-
+            // ✅ Store the storage PATH only — never store the signed URL
             uploadedFiles.push({
               name: file.name,
-              storageName: fileName,
-              url: urlData.signedUrl,
+              storageName: storageName,
+              storagePath: filePath,   // ← the permanent path used to generate URLs on demand
+              url: '',                 // ← kept for backward compat but intentionally empty
               size: file.size,
               type: file.type,
               uploadedAt: new Date().toISOString()
@@ -166,11 +162,7 @@ export default function JobsPage() {
           if (uploadedFiles.length > 0) {
             const job = jobs.find(j => j.sn === sn)
             if (!job) {
-              toast({
-                title: "Error",
-                description: "Job not found",
-                variant: "destructive",
-              })
+              toast({ title: "Error", description: "Job not found", variant: "destructive" })
               return
             }
             const existingFiles = job.files || []
@@ -198,15 +190,103 @@ export default function JobsPage() {
           }
         } catch (error) {
           console.error('Upload error:', error)
-          toast({
-            title: "Upload Failed",
-            description: "An error occurred during upload",
-            variant: "destructive",
-          })
+          toast({ title: "Upload Failed", description: "An error occurred during upload", variant: "destructive" })
         }
       }
     }
     input.click()
+  }
+
+  // ✅ Get the correct storage path — handles both old records (with url) and new ones (with storagePath)
+  const getStoragePath = (file: Job['files'][0], jobSn: number): string => {
+    if (file.storagePath) return file.storagePath
+    // Fallback for old records that stored storageName but not storagePath
+    return `jobs/${jobSn}/${file.storageName}`
+  }
+
+  // ✅ Always generate a fresh signed URL on click — never use the stored url field
+  const handleViewFile = async (file: Job['files'][0], jobSn: number) => {
+    const storagePath = getStoragePath(file, jobSn)
+    const url = await getFreshSignedUrl(storagePath)
+    if (!url) {
+      toast({ title: "Error", description: "Could not generate file URL. Please try again.", variant: "destructive" })
+      return
+    }
+    window.open(url, '_blank')
+  }
+
+  // ✅ Same for download
+  const handleDownloadFile = async (file: Job['files'][0], jobSn: number) => {
+    const storagePath = getStoragePath(file, jobSn)
+    const url = await getFreshSignedUrl(storagePath)
+    if (!url) {
+      toast({ title: "Error", description: "Could not generate download URL. Please try again.", variant: "destructive" })
+      return
+    }
+    const link = document.createElement('a')
+    link.href = url
+    link.download = file.name
+    link.click()
+  }
+
+  const handleRenameFile = async (jobId: string, oldName: string, newName: string, jobSn: number) => {
+    if (!newName.trim()) return
+    const supabase = createClient()
+    const job = jobs.find(j => j.id === jobId)
+    if (!job || !job.files) return
+    const fileToRename = job.files.find(f => f.name === oldName)
+    if (!fileToRename) return
+
+    const oldPath = getStoragePath(fileToRename, jobSn)
+    const newStorageName = `${Date.now()}-${Math.random().toString(36).substring(2)}.${newName.split('.').pop()}`
+    const newPath = `jobs/${jobSn}/${newStorageName}`
+
+    const { error: copyError } = await supabase.storage.from('documents').copy(oldPath, newPath)
+    if (copyError) {
+      toast({ title: "Rename Failed", description: "Failed to copy file", variant: "destructive" })
+      return
+    }
+    const { error: deleteError } = await supabase.storage.from('documents').remove([oldPath])
+    if (deleteError) {
+      toast({ title: "Rename Failed", description: "Failed to delete old file", variant: "destructive" })
+      return
+    }
+    // ✅ Update storagePath and storageName, keep url empty
+    const updatedFiles = job.files.map(f =>
+      f.name === oldName
+        ? { ...f, name: newName, storageName: newStorageName, storagePath: newPath, url: '' }
+        : f
+    )
+    const { error: updateError } = await supabase.from('jobs').update({ files: updatedFiles }).eq('id', jobId)
+    if (updateError) {
+      toast({ title: "Rename Failed", description: "Failed to update database", variant: "destructive" })
+    } else {
+      await refreshJobs()
+      toast({ title: "Renamed", description: "File renamed successfully" })
+    }
+  }
+
+  const handleDeleteFile = async (jobId: string, fileName: string, jobSn: number) => {
+    const supabase = createClient()
+    const job = jobs.find(j => j.id === jobId)
+    if (!job || !job.files) return
+    const fileToDelete = job.files.find(f => f.name === fileName)
+    if (!fileToDelete) return
+
+    const filePath = getStoragePath(fileToDelete, jobSn)
+    const { error: deleteError } = await supabase.storage.from('documents').remove([filePath])
+    if (deleteError) {
+      toast({ title: "Delete Failed", description: "Failed to delete file", variant: "destructive" })
+      return
+    }
+    const updatedFiles = job.files.filter(f => f.name !== fileName)
+    const { error: updateError } = await supabase.from('jobs').update({ files: updatedFiles }).eq('id', jobId)
+    if (updateError) {
+      toast({ title: "Delete Failed", description: "Failed to update database", variant: "destructive" })
+    } else {
+      await refreshJobs()
+      toast({ title: "Deleted", description: "File deleted successfully" })
+    }
   }
 
   const addNewJob = async () => {
@@ -239,72 +319,6 @@ export default function JobsPage() {
   const [terminals, setTerminals] = useState(["Apapa", "TICT", "Sifax terminal", "BESTAF terminal", "Fivestar", "Grilmaldi"])
   const [openTerminal, setOpenTerminal] = useState<Record<number, boolean>>({})
   const [terminalInput, setTerminalInput] = useState<Record<number, string>>({})
-
-  const handleViewFile = (url: string) => {
-    window.open(url, '_blank')
-  }
-
-  const handleDownloadFile = (url: string, name: string) => {
-    const link = document.createElement('a')
-    link.href = url
-    link.download = name
-    link.click()
-  }
-
-  const handleRenameFile = async (jobId: string, oldName: string, newName: string, jobSn: number) => {
-    if (!newName.trim()) return
-    const supabase = createClient()
-    const job = jobs.find(j => j.id === jobId)
-    if (!job || !job.files) return
-    const fileToRename = job.files.find(f => f.name === oldName)
-    if (!fileToRename) return
-
-    const oldPath = `jobs/${jobSn}/${fileToRename.storageName}`
-    const newStorageName = `${Date.now()}-${Math.random().toString(36).substring(2)}.${newName.split('.').pop()}`
-    const newPath = `jobs/${jobSn}/${newStorageName}`
-
-    const { error: copyError } = await supabase.storage.from('documents').copy(oldPath, newPath)
-    if (copyError) {
-      toast({ title: "Rename Failed", description: "Failed to copy file", variant: "destructive" })
-      return
-    }
-    const { error: deleteError } = await supabase.storage.from('documents').remove([oldPath])
-    if (deleteError) {
-      toast({ title: "Rename Failed", description: "Failed to delete old file", variant: "destructive" })
-      return
-    }
-    const updatedFiles = job.files.map(f => f.name === oldName ? { ...f, name: newName, storageName: newStorageName } : f)
-    const { error: updateError } = await supabase.from('jobs').update({ files: updatedFiles }).eq('id', jobId)
-    if (updateError) {
-      toast({ title: "Rename Failed", description: "Failed to update database", variant: "destructive" })
-    } else {
-      await refreshJobs()
-      toast({ title: "Renamed", description: "File renamed successfully" })
-    }
-  }
-
-  const handleDeleteFile = async (jobId: string, fileName: string, jobSn: number) => {
-    const supabase = createClient()
-    const job = jobs.find(j => j.id === jobId)
-    if (!job || !job.files) return
-    const fileToDelete = job.files.find(f => f.name === fileName)
-    if (!fileToDelete) return
-
-    const filePath = `jobs/${jobSn}/${fileToDelete.storageName}`
-    const { error: deleteError } = await supabase.storage.from('documents').remove([filePath])
-    if (deleteError) {
-      toast({ title: "Delete Failed", description: "Failed to delete file", variant: "destructive" })
-      return
-    }
-    const updatedFiles = job.files.filter(f => f.name !== fileName)
-    const { error: updateError } = await supabase.from('jobs').update({ files: updatedFiles }).eq('id', jobId)
-    if (updateError) {
-      toast({ title: "Delete Failed", description: "Failed to update database", variant: "destructive" })
-    } else {
-      await refreshJobs()
-      toast({ title: "Deleted", description: "File deleted successfully" })
-    }
-  }
 
   return (
     <Layout>
@@ -430,11 +444,7 @@ export default function JobsPage() {
                                       setTerminalInput(prev => ({ ...prev, [job.sn]: "" }))
                                     }}
                                   >
-                                    <Check
-                                      className={`mr-2 h-4 w-4 ${
-                                        job.terminal === terminal ? "opacity-100" : "opacity-0"
-                                      }`}
-                                    />
+                                    <Check className={`mr-2 h-4 w-4 ${job.terminal === terminal ? "opacity-100" : "opacity-0"}`} />
                                     {terminal}
                                   </CommandItem>
                                 ))}
@@ -462,9 +472,9 @@ export default function JobsPage() {
                       <div className="flex flex-col gap-1.5">
                         <Select value={job.status} onValueChange={(value) => updateStatus(job.sn, value)}>
                           <SelectTrigger className={`w-[110px] h-8 rounded-lg font-medium text-xs ${
-                            job.status === 'done' ? 'bg-green-500/20 text-green-400 border-green-500/50' : 
-                            job.status === 'in progress' ? 'bg-blue-500/20 text-blue-400 border-blue-500/50' : 
-                            job.status === 'cancelled' ? 'bg-red-500/20 text-red-400 border-red-500/50' : 
+                            job.status === 'done' ? 'bg-green-500/20 text-green-400 border-green-500/50' :
+                            job.status === 'in progress' ? 'bg-blue-500/20 text-blue-400 border-blue-500/50' :
+                            job.status === 'cancelled' ? 'bg-red-500/20 text-red-400 border-red-500/50' :
                             job.status === 'eta' ? 'bg-purple-500/20 text-purple-400 border-purple-500/50' :
                             'bg-yellow-500/20 text-yellow-400 border-yellow-500/50'
                           }`}>
@@ -540,7 +550,7 @@ export default function JobsPage() {
                                         <Button
                                           variant="outline"
                                           size="sm"
-                                          onClick={() => handleViewFile(file.url)}
+                                          onClick={() => handleViewFile(file, job.sn)}
                                           className="flex-1 h-8 text-xs"
                                         >
                                           <Eye className="w-3 h-3 mr-1" />
@@ -549,7 +559,7 @@ export default function JobsPage() {
                                         <Button
                                           variant="outline"
                                           size="sm"
-                                          onClick={() => handleDownloadFile(file.url, file.name)}
+                                          onClick={() => handleDownloadFile(file, job.sn)}
                                           className="flex-1 h-8 text-xs"
                                         >
                                           <Download className="w-3 h-3 mr-1" />
@@ -559,11 +569,7 @@ export default function JobsPage() {
                                       <div className="flex gap-1">
                                         <Dialog>
                                           <DialogTrigger asChild>
-                                            <Button
-                                              variant="outline"
-                                              size="sm"
-                                              className="flex-1 h-8 text-xs"
-                                            >
+                                            <Button variant="outline" size="sm" className="flex-1 h-8 text-xs">
                                               <Edit className="w-3 h-3 mr-1" />
                                               Rename
                                             </Button>
@@ -592,8 +598,7 @@ export default function JobsPage() {
                                               <DialogClose asChild>
                                                 <Button onClick={() => {
                                                   const input = document.getElementById(`newName-${job.id}-${index}`) as HTMLInputElement
-                                                  const newName = input.value
-                                                  handleRenameFile(job.id!, file.name, newName, job.sn)
+                                                  handleRenameFile(job.id!, file.name, input.value, job.sn)
                                                 }}>
                                                   Rename
                                                 </Button>
@@ -603,11 +608,7 @@ export default function JobsPage() {
                                         </Dialog>
                                         <AlertDialog>
                                           <AlertDialogTrigger asChild>
-                                            <Button
-                                              variant="outline"
-                                              size="sm"
-                                              className="flex-1 h-8 text-xs text-red-400 hover:text-red-300"
-                                            >
+                                            <Button variant="outline" size="sm" className="flex-1 h-8 text-xs text-red-400 hover:text-red-300">
                                               <Trash className="w-3 h-3 mr-1" />
                                               Delete
                                             </Button>
@@ -650,11 +651,7 @@ export default function JobsPage() {
                     <TableCell>
                       <AlertDialog>
                         <AlertDialogTrigger asChild>
-                          <Button
-                            variant="ghost"
-                            size="sm"
-                            className="text-red-400 hover:text-red-300 hover:bg-red-500/10 h-9 w-9 p-0"
-                          >
+                          <Button variant="ghost" size="sm" className="text-red-400 hover:text-red-300 hover:bg-red-500/10 h-9 w-9 p-0">
                             <Trash2 className="w-4 h-4" />
                           </Button>
                         </AlertDialogTrigger>

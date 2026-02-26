@@ -1,7 +1,7 @@
 "use client"
 
 import type React from "react"
-import { useState, useEffect } from "react"
+import { useState } from "react"
 import { Folder, ChevronRight, FileText, Upload, X, Plus, FolderPlus, Download } from "lucide-react"
 import { Card } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
@@ -19,63 +19,26 @@ interface FolderItem {
   size?: string
   lastModified?: string
   children?: FolderItem[]
-  fileUrl?: string
+  storagePath?: string  // ✅ path used to generate fresh signed URLs
 }
 
-// Company files structure with categories as top-level folders
 const companyFileStructure: FolderItem[] = [
-  {
-    id: "policies",
-    name: "Policies",
-    type: "folder",
-    children: [],
-  },
-  {
-    id: "procedures",
-    name: "Procedures",
-    type: "folder",
-    children: [],
-  },
-  {
-    id: "certificates",
-    name: "Certificates",
-    type: "folder",
-    children: [],
-  },
-  {
-    id: "licenses",
-    name: "Licenses",
-    type: "folder",
-    children: [],
-  },
-  {
-    id: "contracts",
-    name: "Contracts",
-    type: "folder",
-    children: [],
-  },
-  {
-    id: "reports",
-    name: "Reports",
-    type: "folder",
-    children: [],
-  },
-  {
-    id: "other",
-    name: "Other",
-    type: "folder",
-    children: [],
-  },
+  { id: "policies",     name: "Policies",     type: "folder", children: [] },
+  { id: "procedures",   name: "Procedures",   type: "folder", children: [] },
+  { id: "certificates", name: "Certificates", type: "folder", children: [] },
+  { id: "licenses",     name: "Licenses",     type: "folder", children: [] },
+  { id: "contracts",    name: "Contracts",    type: "folder", children: [] },
+  { id: "reports",      name: "Reports",      type: "folder", children: [] },
+  { id: "other",        name: "Other",        type: "folder", children: [] },
 ]
 
 export function CompanyFiles() {
-  const { companyFiles, uploadCompanyFile, deleteCompanyFile, createFolder, renameFolder, deleteFolder } = useCompanyFiles()
+  const { companyFiles, uploadCompanyFile, deleteCompanyFile, createFolder, renameFolder, deleteFolder, getFreshFileUrl } = useCompanyFiles()
   const [currentPath, setCurrentPath] = useState<FolderItem[]>([])
   const [currentFolder, setCurrentFolder] = useState<FolderItem[]>(companyFileStructure)
   const [isUploading, setIsUploading] = useState(false)
   const [isCreatingFolder, setIsCreatingFolder] = useState(false)
   const [newFolderName, setNewFolderName] = useState("")
-  const [files, setFiles] = useState<Record<string, FolderItem[]>>({})
   const [editingItem, setEditingItem] = useState<FolderItem | null>(null)
   const [editName, setEditName] = useState("")
   const [deletingItem, setDeletingItem] = useState<FolderItem | null>(null)
@@ -84,14 +47,7 @@ export function CompanyFiles() {
     if (folder.type === "folder") {
       const newPath = [...currentPath, folder]
       setCurrentPath(newPath)
-      
-      // If this folder has children from local state, use those
-      if (folder.children && folder.children.length > 0) {
-        setCurrentFolder(folder.children)
-      } else {
-        // For database folders, the display logic will handle showing them based on currentPath
-        setCurrentFolder([])
-      }
+      setCurrentFolder(folder.children && folder.children.length > 0 ? folder.children : [])
     }
   }
 
@@ -123,8 +79,9 @@ export function CompanyFiles() {
     if (file && currentPath.length > 0) {
       try {
         const category = currentPath[0].name.toLowerCase()
-        await uploadCompanyFile(file, currentPath.map(folder => folder.name).join('/'), category)
-        toast.success(`File "${file.name}" uploaded successfully to ${currentPath[currentPath.length - 1]?.name}`)
+        const folderPath = currentPath.map(folder => folder.name).join('/')
+        await uploadCompanyFile(file, folderPath, category)
+        toast.success(`File "${file.name}" uploaded successfully`)
         setIsUploading(false)
       } catch (error) {
         console.error('Upload failed:', error)
@@ -138,9 +95,7 @@ export function CompanyFiles() {
       try {
         const parentId = currentPath.length > 0 ? currentPath[currentPath.length - 1].id : null
         const category = currentPath.length > 0 ? currentPath[0].name.toLowerCase() : undefined
-        
         await createFolder(newFolderName, parentId, category)
-        
         toast.success(`Folder "${newFolderName}" created successfully`)
         setIsCreatingFolder(false)
         setNewFolderName("")
@@ -161,16 +116,8 @@ export function CompanyFiles() {
       try {
         if (editingItem.type === "folder") {
           await renameFolder(editingItem.id, editName)
-        } else {
-          // For files, update in local state only (files are handled differently)
-          const folderId = currentPath.length > 0 ? currentPath[currentPath.length - 1].id : "root"
-          setFiles((prev) => ({
-            ...prev,
-            [folderId]: (prev[folderId] || []).map((item) =>
-              item.id === editingItem.id ? { ...item, name: editName } : item
-            ),
-          }))
         }
+        // File renaming not supported on company files (no storageName to copy)
         toast.success(`"${editingItem.name}" renamed to "${editName}"`)
         setEditingItem(null)
         setEditName("")
@@ -179,10 +126,6 @@ export function CompanyFiles() {
         toast.error('Failed to rename item. Please try again.')
       }
     }
-  }
-
-  const handleDeleteItem = (item: FolderItem) => {
-    setDeletingItem(item)
   }
 
   const confirmDelete = async () => {
@@ -202,49 +145,67 @@ export function CompanyFiles() {
     }
   }
 
-  // Combine current folder structure with uploaded files from database
-  const currentFolderPath = currentPath.length > 0 ? currentPath.map(folder => folder.name).join('/') : ''
+  // ✅ Generate fresh URL on click — never use stored file_url
+  const handleOpenFile = async (item: FolderItem) => {
+    if (!item.storagePath) {
+      toast.error('File path not found.')
+      return
+    }
+    const url = await getFreshFileUrl(item.storagePath)
+    if (!url) {
+      toast.error('Could not open file. Please try again.')
+      return
+    }
+    window.open(url, '_blank')
+  }
+
+  const handleDownloadFile = async (item: FolderItem) => {
+    if (!item.storagePath) {
+      toast.error('File path not found.')
+      return
+    }
+    const url = await getFreshFileUrl(item.storagePath)
+    if (!url) {
+      toast.error('Could not download file. Please try again.')
+      return
+    }
+    const link = document.createElement('a')
+    link.href = url
+    link.download = item.name
+    link.click()
+  }
+
+  // Build display items for current location
+  const currentFolderPath = currentPath.length > 0 ? currentPath.map(f => f.name).join('/') : ''
   const currentFolderName = currentPath.length > 0 ? currentPath[currentPath.length - 1].name : ''
   const currentCategory = currentPath.length > 0 ? currentPath[0].name.toLowerCase() : ''
-  
-  // Get folders and files from database for current location
-  // For root level (currentPath.length === 0), show folders with empty folder_path
+
+  // folder_path stores WHERE an item lives (its parent path), e.g. "Policies" or "Policies/SubFolder"
+  // currentFolderPath is the full path of the folder we're currently viewing
   const dbFolders = companyFiles.filter(doc => {
     if (!doc.is_folder) return false
     if (currentPath.length === 0) {
-      // At root level, show folders with empty folder_path (these are user-created root folders)
+      // Root: show folders whose parent is empty (top-level DB folders)
       return doc.folder_path === '' || doc.folder_path === null || doc.folder_path === undefined
-    } else if (currentPath.length === 1) {
-      // In a category folder, show subfolders for that category
-      return doc.category === currentCategory
-    } else {
-      // In subfolders, show items that match the full path or parent folder name
-      return doc.folder_path === currentFolderPath || doc.folder_path === currentFolderName
     }
+    // Inside any folder: show items whose folder_path matches where we currently are
+    return doc.folder_path === currentFolderPath
   })
 
   const dbFiles = companyFiles.filter(doc => {
     if (doc.is_folder) return false
-    if (currentPath.length === 0) {
-      // At root level, no files should be shown (files go inside folders)
-      return false
-    } else if (currentPath.length === 1) {
-      // In a category folder, show files for that category
-      return doc.category === currentCategory && doc.folder_path === ''
-    } else {
-      // In subfolders, show items that match the full path or parent folder name
-      return doc.folder_path === currentFolderPath || doc.folder_path === currentFolderName
-    }
+    if (currentPath.length === 0) return false
+    // Show files whose folder_path matches the current folder path
+    return doc.folder_path === currentFolderPath
   })
 
-  const displayItems = [
+  const displayItems: FolderItem[] = [
     ...currentFolder,
-    ...(files[currentPath.length > 0 ? currentPath[currentPath.length - 1].id : "root"] || []),
     ...dbFolders.map(doc => ({
       id: doc.id,
       name: doc.name,
       type: "folder" as const,
-      children: []
+      children: [],
     })),
     ...dbFiles.map(doc => ({
       id: doc.id,
@@ -252,8 +213,8 @@ export function CompanyFiles() {
       type: "file" as const,
       size: doc.file_size ? `${(doc.file_size / 1024).toFixed(2)} KB` : undefined,
       lastModified: new Date(doc.created_at).toLocaleDateString(),
-      fileUrl: doc.file_url
-    }))
+      storagePath: doc.path,  // ✅ use path (storage path), not file_url
+    })),
   ]
 
   return (
@@ -274,7 +235,6 @@ export function CompanyFiles() {
             <FolderPlus className="mr-2 h-4 w-4" />
             New Folder
           </Button>
-          {/* Show upload button only when inside a folder */}
           {currentPath.length > 0 && (
             <Button
               variant="outline"
@@ -312,7 +272,7 @@ export function CompanyFiles() {
         </div>
       )}
 
-      {/* New folder creation modal */}
+      {/* New folder modal */}
       {isCreatingFolder && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm p-4">
           <Card className="w-full max-w-md bg-zinc-900 border-zinc-800 p-6">
@@ -321,10 +281,7 @@ export function CompanyFiles() {
               <Button
                 variant="ghost"
                 size="icon"
-                onClick={() => {
-                  setIsCreatingFolder(false)
-                  setNewFolderName("")
-                }}
+                onClick={() => { setIsCreatingFolder(false); setNewFolderName("") }}
                 className="text-zinc-400"
               >
                 <X className="h-4 w-4" />
@@ -336,17 +293,12 @@ export function CompanyFiles() {
                 value={newFolderName}
                 onChange={(e) => setNewFolderName(e.target.value)}
                 className="bg-zinc-800 border-zinc-700 text-white"
-                onKeyDown={(e) => {
-                  if (e.key === "Enter") handleCreateFolder()
-                }}
+                onKeyDown={(e) => { if (e.key === "Enter") handleCreateFolder() }}
               />
               <div className="flex gap-2 justify-end">
                 <Button
                   variant="outline"
-                  onClick={() => {
-                    setIsCreatingFolder(false)
-                    setNewFolderName("")
-                  }}
+                  onClick={() => { setIsCreatingFolder(false); setNewFolderName("") }}
                   className="bg-zinc-800 border-zinc-700"
                 >
                   Cancel
@@ -360,6 +312,7 @@ export function CompanyFiles() {
         </div>
       )}
 
+      {/* Rename dialog */}
       <Dialog open={!!editingItem} onOpenChange={() => setEditingItem(null)}>
         <DialogContent className="bg-zinc-900 border-zinc-800">
           <DialogHeader>
@@ -371,17 +324,12 @@ export function CompanyFiles() {
               value={editName}
               onChange={(e) => setEditName(e.target.value)}
               className="bg-zinc-800 border-zinc-700 text-white"
-              onKeyDown={(e) => {
-                if (e.key === "Enter") handleSaveEdit()
-              }}
+              onKeyDown={(e) => { if (e.key === "Enter") handleSaveEdit() }}
             />
             <div className="flex gap-2 justify-end">
               <Button
                 variant="outline"
-                onClick={() => {
-                  setEditingItem(null)
-                  setEditName("")
-                }}
+                onClick={() => { setEditingItem(null); setEditName("") }}
                 className="bg-zinc-800 border-zinc-700"
               >
                 Cancel
@@ -394,6 +342,7 @@ export function CompanyFiles() {
         </DialogContent>
       </Dialog>
 
+      {/* Delete dialog */}
       <AlertDialog open={!!deletingItem} onOpenChange={() => setDeletingItem(null)}>
         <AlertDialogContent className="bg-zinc-900 border-zinc-800">
           <AlertDialogHeader>
@@ -411,7 +360,7 @@ export function CompanyFiles() {
         </AlertDialogContent>
       </AlertDialog>
 
-      {/* Breadcrumb navigation */}
+      {/* Breadcrumb */}
       {currentPath.length > 0 && (
         <div className="flex items-center gap-2 text-sm">
           <button onClick={() => navigateToBreadcrumb(-1)} className="text-cyan-500 hover:underline">
@@ -422,11 +371,7 @@ export function CompanyFiles() {
               <ChevronRight className="h-4 w-4 text-zinc-600" />
               <button
                 onClick={() => navigateToBreadcrumb(index)}
-                className={
-                  index === currentPath.length - 1
-                    ? "text-zinc-400"
-                    : "text-cyan-500 hover:underline"
-                }
+                className={index === currentPath.length - 1 ? "text-zinc-400" : "text-cyan-500 hover:underline"}
               >
                 {folder.name}
               </button>
@@ -435,21 +380,20 @@ export function CompanyFiles() {
         </div>
       )}
 
-      {/* Back button */}
       {currentPath.length > 0 && (
         <Button variant="outline" size="sm" onClick={navigateBack} className="bg-zinc-900 border-zinc-800">
           Back
         </Button>
       )}
 
-      {/* Folder/file grid */}
+      {/* Grid */}
       <div className="grid gap-4 grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5">
         {displayItems.map((item) => (
           <ContextMenu key={item.id}>
             <ContextMenuTrigger>
               <Card
                 className="group cursor-pointer bg-zinc-900/50 border-zinc-800 hover:border-cyan-500/50 transition-all"
-                onClick={() => navigateToFolder(item)}
+                onClick={() => item.type === "folder" ? navigateToFolder(item) : handleOpenFile(item)}
               >
                 <div className="p-4 flex flex-col items-center text-center gap-2">
                   <div className="flex h-12 w-12 items-center justify-center rounded-lg bg-zinc-800 text-cyan-500 group-hover:bg-cyan-500/10">
@@ -461,14 +405,14 @@ export function CompanyFiles() {
                   {item.type === "file" && item.size && (
                     <p className="text-xs text-zinc-500">{item.size}</p>
                   )}
-                  {item.type === "file" && item.fileUrl && (
+                  {item.type === "file" && item.storagePath && (
                     <Button
                       variant="ghost"
                       size="sm"
                       className="mt-1 p-1 h-6 w-6 text-zinc-400 hover:text-cyan-400"
                       onClick={(e) => {
                         e.stopPropagation()
-                        window.open(item.fileUrl, '_blank')
+                        handleDownloadFile(item)
                       }}
                       title="Download file"
                     >
@@ -482,7 +426,7 @@ export function CompanyFiles() {
               <ContextMenuItem onClick={() => handleEditItem(item)} className="text-zinc-200 hover:bg-zinc-800">
                 Rename
               </ContextMenuItem>
-              <ContextMenuItem onClick={() => handleDeleteItem(item)} className="text-red-500 hover:bg-red-500/10">
+              <ContextMenuItem onClick={() => setDeletingItem(item)} className="text-red-500 hover:bg-red-500/10">
                 Delete
               </ContextMenuItem>
             </ContextMenuContent>

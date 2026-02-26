@@ -82,12 +82,10 @@ export const DocumentsProvider: React.FC<DocumentsProviderProps> = ({ children }
       const { data: { user } } = await supabase.auth.getUser()
       if (!user) return
 
-      // Create unique file path
       const fileExt = file.name.split('.').pop()
       const fileName = `${Date.now()}-${Math.random().toString(36).substring(2)}.${fileExt}`
       const filePath = `${folderPath}/${fileName}`
 
-      // Upload file to Supabase Storage
       const { error: uploadError } = await supabase.storage
         .from('documents')
         .upload(filePath, file)
@@ -97,17 +95,15 @@ export const DocumentsProvider: React.FC<DocumentsProviderProps> = ({ children }
         throw uploadError
       }
 
-      // Get signed URL for the uploaded file
       const { data: { signedUrl }, error: signedUrlError } = await supabase.storage
         .from('documents')
-        .createSignedUrl(filePath, 60 * 60 * 24 * 365) // 1 year expiry
+        .createSignedUrl(filePath, 60 * 60 * 24 * 365)
 
       if (signedUrlError) {
         console.error('Error creating signed URL:', signedUrlError)
         throw signedUrlError
       }
 
-      // Save document metadata to database
       const { error: dbError } = await supabase
         .from('documents')
         .insert({
@@ -117,12 +113,13 @@ export const DocumentsProvider: React.FC<DocumentsProviderProps> = ({ children }
           file_url: signedUrl,
           file_size: file.size,
           mime_type: file.type,
-          uploaded_by: user.id
+          is_folder: false,
+          uploaded_by: user.id,
         })
 
       if (dbError) {
-        console.error('Error saving document metadata:', dbError)
-        throw dbError
+        console.error('Error saving document metadata:', dbError.message, '| code:', dbError.code)
+        throw new Error(dbError.message)
       }
 
       await refreshDocuments()
@@ -132,12 +129,11 @@ export const DocumentsProvider: React.FC<DocumentsProviderProps> = ({ children }
     }
   }
 
-const deleteDocument = async (id: string) => {
+  const deleteDocument = async (id: string) => {
     try {
       const { data: { user } } = await supabase.auth.getUser()
       if (!user) return
 
-      // Get document details first
       const { data: document, error: fetchError } = await supabase
         .from('documents')
         .select('path, is_folder')
@@ -150,7 +146,6 @@ const deleteDocument = async (id: string) => {
         throw fetchError
       }
 
-      // Only delete from storage if it's a file, not a folder
       if (!document?.is_folder && document?.path) {
         const { error: storageError } = await supabase.storage
           .from('documents')
@@ -161,7 +156,6 @@ const deleteDocument = async (id: string) => {
         }
       }
 
-      // Delete from database
       const { error: dbError } = await supabase
         .from('documents')
         .delete()
@@ -169,8 +163,8 @@ const deleteDocument = async (id: string) => {
         .eq('uploaded_by', user.id)
 
       if (dbError) {
-        console.error('Error deleting document from database:', dbError)
-        throw dbError
+        console.error('Error deleting document:', dbError.message, '| code:', dbError.code)
+        throw new Error(dbError.message)
       }
 
       await refreshDocuments()
@@ -185,34 +179,46 @@ const deleteDocument = async (id: string) => {
       const { data: { user } } = await supabase.auth.getUser()
       if (!user) return
 
-      // Generate folder path based on parent
+      if (!name || name.trim() === '') {
+        throw new Error('Folder name cannot be empty.')
+      }
+
+      const trimmedName = name.trim()
       let folderPath = ''
+
       if (parentId && parentId !== 'root') {
-        // Get parent folder details
-        const { data: parentFolder } = await supabase
+        const { data: parentFolder, error: parentError } = await supabase
           .from('documents')
-          .select('folder_path')
+          .select('folder_path, name')
           .eq('id', parentId)
           .single()
-        
-        if (parentFolder) {
-          folderPath = `${parentFolder.folder_path}/${name}`
+
+        if (parentError) {
+          console.error('Error fetching parent folder:', parentError)
+          // Fall back to root level
+        } else if (parentFolder) {
+          folderPath = parentFolder.folder_path
+            ? `${parentFolder.folder_path}/${parentFolder.name}`
+            : parentFolder.name
         }
       }
 
-      // Save folder to database
+      // path = unique storage-style path for this folder
+      const path = folderPath ? `${folderPath}/${trimmedName}` : trimmedName
+
       const { error: dbError } = await supabase
         .from('documents')
         .insert({
-          name: name,
+          name: trimmedName,
+          path: path,
           folder_path: folderPath,
           is_folder: true,
-          uploaded_by: user.id
+          uploaded_by: user.id,
         })
 
       if (dbError) {
-        console.error('Error creating folder:', dbError)
-        throw dbError
+        console.error('Error creating folder:', dbError.message, '| code:', dbError.code, '| hint:', dbError.hint)
+        throw new Error(dbError.message || 'Failed to create folder.')
       }
 
       await refreshDocuments()
@@ -227,17 +233,54 @@ const deleteDocument = async (id: string) => {
       const { data: { user } } = await supabase.auth.getUser()
       if (!user) return
 
-      // Update folder name in database
-      const { error: dbError } = await supabase
+      const { data: folder, error: fetchError } = await supabase
         .from('documents')
-        .update({ name: newName, updated_at: new Date().toISOString() })
+        .select('name, folder_path, path')
         .eq('id', id)
         .eq('uploaded_by', user.id)
-        .eq('is_folder', true)
+        .single()
+
+      if (fetchError) {
+        console.error('Error fetching folder:', fetchError)
+        throw fetchError
+      }
+
+      const oldPath = folder.path || ''
+      const newPath = folder.folder_path
+        ? `${folder.folder_path}/${newName}`
+        : newName
+
+      const { error: dbError } = await supabase
+        .from('documents')
+        .update({ name: newName, path: newPath, updated_at: new Date().toISOString() })
+        .eq('id', id)
+        .eq('uploaded_by', user.id)
 
       if (dbError) {
-        console.error('Error renaming folder:', dbError)
-        throw dbError
+        console.error('Error renaming folder:', dbError.message, '| code:', dbError.code)
+        throw new Error(dbError.message)
+      }
+
+      // Update children whose path starts with the old folder path
+      if (oldPath) {
+        const { data: children } = await supabase
+          .from('documents')
+          .select('id, path, folder_path')
+          .eq('uploaded_by', user.id)
+          .like('path', `${oldPath}/%`)
+
+        if (children && children.length > 0) {
+          for (const child of children) {
+            await supabase
+              .from('documents')
+              .update({
+                path: child.path.replace(oldPath, newPath),
+                folder_path: child.folder_path.replace(oldPath, newPath),
+              })
+              .eq('id', child.id)
+              .eq('uploaded_by', user.id)
+          }
+        }
       }
 
       await refreshDocuments()
@@ -252,17 +295,15 @@ const deleteDocument = async (id: string) => {
       const { data: { user } } = await supabase.auth.getUser()
       if (!user) return
 
-      // Delete folder from database
       const { error: dbError } = await supabase
         .from('documents')
         .delete()
         .eq('id', id)
         .eq('uploaded_by', user.id)
-        .eq('is_folder', true)
 
       if (dbError) {
-        console.error('Error deleting folder:', dbError)
-        throw dbError
+        console.error('Error deleting folder:', dbError.message, '| code:', dbError.code)
+        throw new Error(dbError.message)
       }
 
       await refreshDocuments()
@@ -277,17 +318,15 @@ const deleteDocument = async (id: string) => {
       const { data: { user } } = await supabase.auth.getUser()
       if (!user) return
 
-      // Update document name in database
       const { error: dbError } = await supabase
         .from('documents')
         .update({ name: newName, updated_at: new Date().toISOString() })
         .eq('id', id)
         .eq('uploaded_by', user.id)
-        .eq('is_folder', false)
 
       if (dbError) {
-        console.error('Error renaming document:', dbError)
-        throw dbError
+        console.error('Error renaming document:', dbError.message, '| code:', dbError.code)
+        throw new Error(dbError.message)
       }
 
       await refreshDocuments()

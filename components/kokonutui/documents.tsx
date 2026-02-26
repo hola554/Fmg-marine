@@ -56,14 +56,12 @@ const documentStructure: FolderItem[] = [
 ]
 
 export function Documents() {
-  const { documents, uploadDocument, deleteDocument } = useDocuments()
+  const { documents, uploadDocument, deleteDocument, createFolder, renameFolder, deleteFolder, renameDocument } = useDocuments()
   const [currentPath, setCurrentPath] = useState<FolderItem[]>([])
   const [currentFolder, setCurrentFolder] = useState<FolderItem[]>(documentStructure)
   const [isUploading, setIsUploading] = useState(false)
-  // <CHANGE> Added state for custom folder creation
   const [isCreatingFolder, setIsCreatingFolder] = useState(false)
   const [newFolderName, setNewFolderName] = useState("")
-  const [files, setFiles] = useState<Record<string, FolderItem[]>>({})
   const [editingItem, setEditingItem] = useState<FolderItem | null>(null)
   const [editName, setEditName] = useState("")
   const [deletingItem, setDeletingItem] = useState<FolderItem | null>(null)
@@ -113,25 +111,18 @@ export function Documents() {
     }
   }
 
-  // <CHANGE> Added custom folder creation logic
-  const handleCreateFolder = () => {
+  const handleCreateFolder = async () => {
     if (newFolderName.trim()) {
-      const folderId = currentPath.length > 0 ? currentPath[currentPath.length - 1].id : "root"
-      const newFolder: FolderItem = {
-        id: `${folderId}-folder-${Date.now()}`,
-        name: newFolderName,
-        type: "folder",
-        children: [],
+      try {
+        const parentId = currentPath.length > 0 ? currentPath[currentPath.length - 1].id : null
+        await createFolder(newFolderName, parentId)
+        toast.success(`Folder "${newFolderName}" created successfully`)
+        setIsCreatingFolder(false)
+        setNewFolderName("")
+      } catch (error) {
+        console.error('Error creating folder:', error)
+        toast.error('Failed to create folder. Please try again.')
       }
-
-      setFiles((prev) => ({
-        ...prev,
-        [folderId]: [...(prev[folderId] || []), newFolder],
-      }))
-
-      toast.success(`Folder "${newFolderName}" created successfully`)
-      setIsCreatingFolder(false)
-      setNewFolderName("")
     }
   }
 
@@ -140,18 +131,21 @@ export function Documents() {
     setEditName(item.name)
   }
 
-  const handleSaveEdit = () => {
+  const handleSaveEdit = async () => {
     if (editName.trim() && editingItem) {
-      const folderId = currentPath.length > 0 ? currentPath[currentPath.length - 1].id : "root"
-      setFiles((prev) => ({
-        ...prev,
-        [folderId]: (prev[folderId] || []).map((item) =>
-          item.id === editingItem.id ? { ...item, name: editName } : item
-        ),
-      }))
-      toast.success(`"${editingItem.name}" renamed to "${editName}"`)
-      setEditingItem(null)
-      setEditName("")
+      try {
+        if (editingItem.type === "folder") {
+          await renameFolder(editingItem.id, editName)
+        } else {
+          await renameDocument(editingItem.id, editName)
+        }
+        toast.success(`"${editingItem.name}" renamed to "${editName}"`)
+        setEditingItem(null)
+        setEditName("")
+      } catch (error) {
+        console.error('Error renaming item:', error)
+        toast.error('Failed to rename item. Please try again.')
+      }
     }
   }
 
@@ -162,24 +156,58 @@ export function Documents() {
   const confirmDelete = async () => {
     if (deletingItem) {
       try {
-        await deleteDocument(deletingItem.id)
+        if (deletingItem.type === "folder") {
+          await deleteFolder(deletingItem.id)
+        } else {
+          await deleteDocument(deletingItem.id)
+        }
         toast.success(`"${deletingItem.name}" deleted successfully`)
         setDeletingItem(null)
       } catch (error) {
         console.error('Delete failed:', error)
-        toast.error('Failed to delete file. Please try again.')
+        toast.error('Failed to delete item. Please try again.')
       }
     }
   }
 
-  // <CHANGE> Combine current folder structure with uploaded files from database
+  // Combine current folder structure with uploaded files from database
   const currentFolderPath = currentPath.length > 0 ? currentPath.map(folder => folder.name).join('/') : ''
-  const folderDocuments = documents.filter(doc => doc.folder_path === currentFolderPath)
+  const currentFolderName = currentPath.length > 0 ? currentPath[currentPath.length - 1].name : ''
+  
+  // Get items from database for current path
+  // For root level (currentPath.length === 0), show folders with empty folder_path
+  // For nested levels, match the folder_path or the last folder name
+  const dbFolders = documents.filter(doc => {
+    if (!doc.is_folder) return false
+    if (currentPath.length === 0) {
+      // At root level, show folders with empty folder_path
+      return doc.folder_path === '' || doc.folder_path === null || doc.folder_path === undefined
+    } else {
+      // In nested folders, match folder_path or parent folder name
+      return doc.folder_path === currentFolderPath || doc.folder_path === currentFolderName
+    }
+  })
+  
+  const dbFiles = documents.filter(doc => {
+    if (doc.is_folder) return false
+    if (currentPath.length === 0) {
+      // At root level, no files should be shown (files go inside folders)
+      return false
+    } else {
+      // In nested folders, match folder_path or parent folder name
+      return doc.folder_path === currentFolderPath || doc.folder_path === currentFolderName
+    }
+  })
 
   const displayItems = [
     ...currentFolder,
-    ...(files[currentPath.length > 0 ? currentPath[currentPath.length - 1].id : "root"] || []),
-    ...folderDocuments.map(doc => ({
+    ...dbFolders.map(doc => ({
+      id: doc.id,
+      name: doc.name,
+      type: "folder" as const,
+      children: []
+    })),
+    ...dbFiles.map(doc => ({
       id: doc.id,
       name: doc.name,
       type: "file" as const,

@@ -12,6 +12,7 @@ export type Document = {
   file_url?: string
   file_size?: number
   mime_type?: string
+  is_folder?: boolean
   uploaded_by: string
   created_at: string
   updated_at: string
@@ -23,6 +24,10 @@ interface DocumentsContextType {
   uploadDocument: (file: File, folderPath: string) => Promise<void>
   deleteDocument: (id: string) => Promise<void>
   refreshDocuments: () => Promise<void>
+  createFolder: (name: string, parentId: string | null) => Promise<void>
+  renameFolder: (id: string, newName: string) => Promise<void>
+  deleteFolder: (id: string) => Promise<void>
+  renameDocument: (id: string, newName: string) => Promise<void>
 }
 
 const DocumentsContext = createContext<DocumentsContextType | undefined>(undefined)
@@ -127,7 +132,7 @@ export const DocumentsProvider: React.FC<DocumentsProviderProps> = ({ children }
     }
   }
 
-  const deleteDocument = async (id: string) => {
+const deleteDocument = async (id: string) => {
     try {
       const { data: { user } } = await supabase.auth.getUser()
       if (!user) return
@@ -135,7 +140,7 @@ export const DocumentsProvider: React.FC<DocumentsProviderProps> = ({ children }
       // Get document details first
       const { data: document, error: fetchError } = await supabase
         .from('documents')
-        .select('path')
+        .select('path, is_folder')
         .eq('id', id)
         .eq('uploaded_by', user.id)
         .single()
@@ -145,14 +150,15 @@ export const DocumentsProvider: React.FC<DocumentsProviderProps> = ({ children }
         throw fetchError
       }
 
-      // Delete from storage
-      const { error: storageError } = await supabase.storage
-        .from('documents')
-        .remove([document.path])
+      // Only delete from storage if it's a file, not a folder
+      if (!document?.is_folder && document?.path) {
+        const { error: storageError } = await supabase.storage
+          .from('documents')
+          .remove([document.path])
 
-      if (storageError) {
-        console.error('Error deleting from storage:', storageError)
-        // Continue with database deletion even if storage deletion fails
+        if (storageError) {
+          console.error('Error deleting from storage:', storageError)
+        }
       }
 
       // Delete from database
@@ -174,6 +180,123 @@ export const DocumentsProvider: React.FC<DocumentsProviderProps> = ({ children }
     }
   }
 
+  const createFolder = async (name: string, parentId: string | null) => {
+    try {
+      const { data: { user } } = await supabase.auth.getUser()
+      if (!user) return
+
+      // Generate folder path based on parent
+      let folderPath = ''
+      if (parentId && parentId !== 'root') {
+        // Get parent folder details
+        const { data: parentFolder } = await supabase
+          .from('documents')
+          .select('folder_path')
+          .eq('id', parentId)
+          .single()
+        
+        if (parentFolder) {
+          folderPath = `${parentFolder.folder_path}/${name}`
+        }
+      }
+
+      // Save folder to database
+      const { error: dbError } = await supabase
+        .from('documents')
+        .insert({
+          name: name,
+          folder_path: folderPath,
+          is_folder: true,
+          uploaded_by: user.id
+        })
+
+      if (dbError) {
+        console.error('Error creating folder:', dbError)
+        throw dbError
+      }
+
+      await refreshDocuments()
+    } catch (error) {
+      console.error('Error creating folder:', error)
+      throw error
+    }
+  }
+
+  const renameFolder = async (id: string, newName: string) => {
+    try {
+      const { data: { user } } = await supabase.auth.getUser()
+      if (!user) return
+
+      // Update folder name in database
+      const { error: dbError } = await supabase
+        .from('documents')
+        .update({ name: newName, updated_at: new Date().toISOString() })
+        .eq('id', id)
+        .eq('uploaded_by', user.id)
+        .eq('is_folder', true)
+
+      if (dbError) {
+        console.error('Error renaming folder:', dbError)
+        throw dbError
+      }
+
+      await refreshDocuments()
+    } catch (error) {
+      console.error('Error renaming folder:', error)
+      throw error
+    }
+  }
+
+  const deleteFolder = async (id: string) => {
+    try {
+      const { data: { user } } = await supabase.auth.getUser()
+      if (!user) return
+
+      // Delete folder from database
+      const { error: dbError } = await supabase
+        .from('documents')
+        .delete()
+        .eq('id', id)
+        .eq('uploaded_by', user.id)
+        .eq('is_folder', true)
+
+      if (dbError) {
+        console.error('Error deleting folder:', dbError)
+        throw dbError
+      }
+
+      await refreshDocuments()
+    } catch (error) {
+      console.error('Error deleting folder:', error)
+      throw error
+    }
+  }
+
+  const renameDocument = async (id: string, newName: string) => {
+    try {
+      const { data: { user } } = await supabase.auth.getUser()
+      if (!user) return
+
+      // Update document name in database
+      const { error: dbError } = await supabase
+        .from('documents')
+        .update({ name: newName, updated_at: new Date().toISOString() })
+        .eq('id', id)
+        .eq('uploaded_by', user.id)
+        .eq('is_folder', false)
+
+      if (dbError) {
+        console.error('Error renaming document:', dbError)
+        throw dbError
+      }
+
+      await refreshDocuments()
+    } catch (error) {
+      console.error('Error renaming document:', error)
+      throw error
+    }
+  }
+
   useEffect(() => {
     refreshDocuments()
   }, [])
@@ -184,7 +307,11 @@ export const DocumentsProvider: React.FC<DocumentsProviderProps> = ({ children }
       loading,
       uploadDocument,
       deleteDocument,
-      refreshDocuments
+      refreshDocuments,
+      createFolder,
+      renameFolder,
+      deleteFolder,
+      renameDocument
     }}>
       {children}
     </DocumentsContext.Provider>

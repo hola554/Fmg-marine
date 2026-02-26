@@ -69,7 +69,7 @@ const companyFileStructure: FolderItem[] = [
 ]
 
 export function CompanyFiles() {
-  const { companyFiles, uploadCompanyFile, deleteCompanyFile } = useCompanyFiles()
+  const { companyFiles, uploadCompanyFile, deleteCompanyFile, createFolder, renameFolder, deleteFolder } = useCompanyFiles()
   const [currentPath, setCurrentPath] = useState<FolderItem[]>([])
   const [currentFolder, setCurrentFolder] = useState<FolderItem[]>(companyFileStructure)
   const [isUploading, setIsUploading] = useState(false)
@@ -82,8 +82,16 @@ export function CompanyFiles() {
 
   const navigateToFolder = (folder: FolderItem) => {
     if (folder.type === "folder") {
-      setCurrentPath([...currentPath, folder])
-      setCurrentFolder(folder.children || [])
+      const newPath = [...currentPath, folder]
+      setCurrentPath(newPath)
+      
+      // If this folder has children from local state, use those
+      if (folder.children && folder.children.length > 0) {
+        setCurrentFolder(folder.children)
+      } else {
+        // For database folders, the display logic will handle showing them based on currentPath
+        setCurrentFolder([])
+      }
     }
   }
 
@@ -125,24 +133,21 @@ export function CompanyFiles() {
     }
   }
 
-  const handleCreateFolder = () => {
+  const handleCreateFolder = async () => {
     if (newFolderName.trim()) {
-      const folderId = currentPath.length > 0 ? currentPath[currentPath.length - 1].id : "root"
-      const newFolder: FolderItem = {
-        id: `${folderId}-folder-${Date.now()}`,
-        name: newFolderName,
-        type: "folder",
-        children: [],
+      try {
+        const parentId = currentPath.length > 0 ? currentPath[currentPath.length - 1].id : null
+        const category = currentPath.length > 0 ? currentPath[0].name.toLowerCase() : undefined
+        
+        await createFolder(newFolderName, parentId, category)
+        
+        toast.success(`Folder "${newFolderName}" created successfully`)
+        setIsCreatingFolder(false)
+        setNewFolderName("")
+      } catch (error) {
+        console.error('Error creating folder:', error)
+        toast.error('Failed to create folder. Please try again.')
       }
-
-      setFiles((prev) => ({
-        ...prev,
-        [folderId]: [...(prev[folderId] || []), newFolder],
-      }))
-
-      toast.success(`Folder "${newFolderName}" created successfully`)
-      setIsCreatingFolder(false)
-      setNewFolderName("")
     }
   }
 
@@ -151,18 +156,28 @@ export function CompanyFiles() {
     setEditName(item.name)
   }
 
-  const handleSaveEdit = () => {
+  const handleSaveEdit = async () => {
     if (editName.trim() && editingItem) {
-      const folderId = currentPath.length > 0 ? currentPath[currentPath.length - 1].id : "root"
-      setFiles((prev) => ({
-        ...prev,
-        [folderId]: (prev[folderId] || []).map((item) =>
-          item.id === editingItem.id ? { ...item, name: editName } : item
-        ),
-      }))
-      toast.success(`"${editingItem.name}" renamed to "${editName}"`)
-      setEditingItem(null)
-      setEditName("")
+      try {
+        if (editingItem.type === "folder") {
+          await renameFolder(editingItem.id, editName)
+        } else {
+          // For files, update in local state only (files are handled differently)
+          const folderId = currentPath.length > 0 ? currentPath[currentPath.length - 1].id : "root"
+          setFiles((prev) => ({
+            ...prev,
+            [folderId]: (prev[folderId] || []).map((item) =>
+              item.id === editingItem.id ? { ...item, name: editName } : item
+            ),
+          }))
+        }
+        toast.success(`"${editingItem.name}" renamed to "${editName}"`)
+        setEditingItem(null)
+        setEditName("")
+      } catch (error) {
+        console.error('Error renaming item:', error)
+        toast.error('Failed to rename item. Please try again.')
+      }
     }
   }
 
@@ -173,35 +188,65 @@ export function CompanyFiles() {
   const confirmDelete = async () => {
     if (deletingItem) {
       try {
-        await deleteCompanyFile(deletingItem.id)
+        if (deletingItem.type === "folder") {
+          await deleteFolder(deletingItem.id)
+        } else {
+          await deleteCompanyFile(deletingItem.id)
+        }
         toast.success(`"${deletingItem.name}" deleted successfully`)
         setDeletingItem(null)
       } catch (error) {
         console.error('Delete failed:', error)
-        toast.error('Failed to delete file. Please try again.')
+        toast.error('Failed to delete item. Please try again.')
       }
     }
   }
 
   // Combine current folder structure with uploaded files from database
   const currentFolderPath = currentPath.length > 0 ? currentPath.map(folder => folder.name).join('/') : ''
-  const folderDocuments = companyFiles.filter(doc => {
+  const currentFolderName = currentPath.length > 0 ? currentPath[currentPath.length - 1].name : ''
+  const currentCategory = currentPath.length > 0 ? currentPath[0].name.toLowerCase() : ''
+  
+  // Get folders and files from database for current location
+  // For root level (currentPath.length === 0), show folders with empty folder_path
+  const dbFolders = companyFiles.filter(doc => {
+    if (!doc.is_folder) return false
     if (currentPath.length === 0) {
-      // At root level, don't show files - only categories
+      // At root level, show folders with empty folder_path (these are user-created root folders)
+      return doc.folder_path === '' || doc.folder_path === null || doc.folder_path === undefined
+    } else if (currentPath.length === 1) {
+      // In a category folder, show subfolders for that category
+      return doc.category === currentCategory
+    } else {
+      // In subfolders, show items that match the full path or parent folder name
+      return doc.folder_path === currentFolderPath || doc.folder_path === currentFolderName
+    }
+  })
+
+  const dbFiles = companyFiles.filter(doc => {
+    if (doc.is_folder) return false
+    if (currentPath.length === 0) {
+      // At root level, no files should be shown (files go inside folders)
       return false
     } else if (currentPath.length === 1) {
       // In a category folder, show files for that category
-      return doc.category === currentPath[0].name.toLowerCase()
+      return doc.category === currentCategory && doc.folder_path === ''
     } else {
-      // In subfolders, show files that match the full path
-      return doc.folder_path === currentFolderPath
+      // In subfolders, show items that match the full path or parent folder name
+      return doc.folder_path === currentFolderPath || doc.folder_path === currentFolderName
     }
   })
 
   const displayItems = [
     ...currentFolder,
     ...(files[currentPath.length > 0 ? currentPath[currentPath.length - 1].id : "root"] || []),
-    ...folderDocuments.map(doc => ({
+    ...dbFolders.map(doc => ({
+      id: doc.id,
+      name: doc.name,
+      type: "folder" as const,
+      children: []
+    })),
+    ...dbFiles.map(doc => ({
       id: doc.id,
       name: doc.name,
       type: "file" as const,

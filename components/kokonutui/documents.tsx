@@ -19,6 +19,7 @@ interface FolderItem {
   size?: string
   lastModified?: string
   children?: FolderItem[]
+  fileUrl?: string
 }
 
 // <CHANGE> Removed Compliance folder and restructured to match user requirements
@@ -114,8 +115,10 @@ export function Documents() {
   const handleCreateFolder = async () => {
     if (newFolderName.trim()) {
       try {
-        const parentId = currentPath.length > 0 ? currentPath[currentPath.length - 1].id : null
-        await createFolder(newFolderName, parentId)
+        // Pass the current folder path instead of parentId
+        // Ensure folderPath is always a string (empty string for root level)
+        const folderPath: string = currentFolderPath || ''
+        await createFolder(newFolderName, folderPath)
         toast.success(`Folder "${newFolderName}" created successfully`)
         setIsCreatingFolder(false)
         setNewFolderName("")

@@ -24,7 +24,7 @@ interface DocumentsContextType {
   uploadDocument: (file: File, folderPath: string) => Promise<void>
   deleteDocument: (id: string) => Promise<void>
   refreshDocuments: () => Promise<void>
-  createFolder: (name: string, parentId: string | null) => Promise<void>
+  createFolder: (name: string, folderPath: string) => Promise<void>
   renameFolder: (id: string, newName: string) => Promise<void>
   deleteFolder: (id: string) => Promise<void>
   renameDocument: (id: string, newName: string) => Promise<void>
@@ -174,7 +174,7 @@ export const DocumentsProvider: React.FC<DocumentsProviderProps> = ({ children }
     }
   }
 
-  const createFolder = async (name: string, parentId: string | null) => {
+  const createFolder = async (name: string, folderPath: string) => {
     try {
       const { data: { user } } = await supabase.auth.getUser()
       if (!user) return
@@ -184,27 +184,13 @@ export const DocumentsProvider: React.FC<DocumentsProviderProps> = ({ children }
       }
 
       const trimmedName = name.trim()
-      let folderPath = ''
 
-      if (parentId && parentId !== 'root') {
-        const { data: parentFolder, error: parentError } = await supabase
-          .from('documents')
-          .select('folder_path, name')
-          .eq('id', parentId)
-          .single()
-
-        if (parentError) {
-          console.error('Error fetching parent folder:', parentError)
-          // Fall back to root level
-        } else if (parentFolder) {
-          folderPath = parentFolder.folder_path
-            ? `${parentFolder.folder_path}/${parentFolder.name}`
-            : parentFolder.name
-        }
-      }
+      // folderPath is now passed directly from the UI (the current folder path)
+      // folderPath = '' for root level, or e.g. 'Shipping line/Terminal Authorities' or 'Shipping line/Terminal Authorities/MSC Authority' for nested
+      const currentFolderPath = folderPath || ''
 
       // path = unique storage-style path for this folder
-      const path = folderPath ? `${folderPath}/${trimmedName}` : trimmedName
+      const path = currentFolderPath ? `${currentFolderPath}/${trimmedName}` : trimmedName
 
       const { error: dbError } = await supabase
         .from('documents')

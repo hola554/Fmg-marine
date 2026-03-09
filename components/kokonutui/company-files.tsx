@@ -93,9 +93,10 @@ export function CompanyFiles() {
   const handleCreateFolder = async () => {
     if (newFolderName.trim()) {
       try {
-        const parentId = currentPath.length > 0 ? currentPath[currentPath.length - 1].id : null
+        // Pass the current folder path instead of parentId
+        const folderPath = currentFolderPath
         const category = currentPath.length > 0 ? currentPath[0].name.toLowerCase() : undefined
-        await createFolder(newFolderName, parentId, category)
+        await createFolder(newFolderName, folderPath, category)
         toast.success(`Folder "${newFolderName}" created successfully`)
         setIsCreatingFolder(false)
         setNewFolderName("")

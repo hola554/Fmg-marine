@@ -25,9 +25,10 @@ interface CompanyFilesContextType {
   uploadCompanyFile: (file: File, folderPath: string, category?: string) => Promise<void>
   deleteCompanyFile: (id: string) => Promise<void>
   refreshCompanyFiles: () => Promise<void>
-  createFolder: (name: string, parentId: string | null, category?: string) => Promise<void>
+  createFolder: (name: string, folderPath: string, category?: string) => Promise<void>
   renameFolder: (id: string, newName: string) => Promise<void>
   deleteFolder: (id: string) => Promise<void>
+  getFreshFileUrl: (path: string) => Promise<string | null>
 }
 
 const CompanyFilesContext = createContext<CompanyFilesContextType | undefined>(undefined)
@@ -95,7 +96,7 @@ export const CompanyFilesProvider: React.FC<CompanyFilesProviderProps> = ({ chil
         throw uploadError
       }
 
-      const { data: { signedUrl }, error: signedUrlError } = await supabase.storage
+      const { data: urlData, error: signedUrlError } = await supabase.storage
         .from('documents')
         .createSignedUrl(filePath, 60 * 60 * 24 * 365)
 
@@ -103,6 +104,12 @@ export const CompanyFilesProvider: React.FC<CompanyFilesProviderProps> = ({ chil
         console.error('Error creating signed URL:', signedUrlError)
         throw signedUrlError
       }
+
+      if (!urlData) {
+        throw new Error('Failed to create signed URL')
+      }
+
+      const signedUrl = urlData.signedUrl
 
       const { error: dbError } = await supabase
         .from('company_files')
@@ -174,7 +181,7 @@ export const CompanyFilesProvider: React.FC<CompanyFilesProviderProps> = ({ chil
     }
   }
 
-  const createFolder = async (name: string, parentId: string | null, category?: string) => {
+  const createFolder = async (name: string, folderPath: string, category?: string) => {
     try {
       const { data: { user }, error: authError } = await supabase.auth.getUser()
 
@@ -193,29 +200,12 @@ export const CompanyFilesProvider: React.FC<CompanyFilesProviderProps> = ({ chil
 
       const trimmedName = name.trim()
 
-      // Build the folder_path (where this folder lives) and path (unique identifier)
-      let folderPath = ''
-
-      if (parentId && parentId !== 'root') {
-        const { data: parentFolder, error: parentError } = await supabase
-          .from('company_files')
-          .select('folder_path, name')
-          .eq('id', parentId)
-          .eq('is_folder', true)
-          .single()
-
-        if (parentError) {
-          console.error('Error fetching parent folder:', parentError)
-          // Fall back to root level
-        } else if (parentFolder) {
-          folderPath = parentFolder.folder_path
-            ? `${parentFolder.folder_path}/${parentFolder.name}`
-            : parentFolder.name
-        }
-      }
+      // folderPath is now passed directly from the UI (the current folder path)
+      // folderPath = '' for root level, or e.g. 'Policies' or 'Policies/SubFolder' for nested
+      const currentFolderPath = folderPath || ''
 
       // path acts as the unique storage-style path for this folder
-      const path = folderPath ? `${folderPath}/${trimmedName}` : trimmedName
+      const path = currentFolderPath ? `${currentFolderPath}/${trimmedName}` : trimmedName
 
       const { error: dbError } = await supabase
         .from('company_files')
@@ -338,6 +328,32 @@ export const CompanyFilesProvider: React.FC<CompanyFilesProviderProps> = ({ chil
     }
   }
 
+  const getFreshFileUrl = async (path: string): Promise<string | null> => {
+    try {
+      const { data: { user } } = await supabase.auth.getUser()
+      if (!user) return null
+
+      const { data: urlData, error: signedUrlError } = await supabase.storage
+        .from('documents')
+        .createSignedUrl(path, 60 * 60 * 24 * 7) // 7 days validity
+
+      if (signedUrlError) {
+        console.error('Error creating signed URL:', signedUrlError)
+        return null
+      }
+
+      if (!urlData) {
+        console.error('No URL data returned')
+        return null
+      }
+
+      return urlData.signedUrl
+    } catch (error) {
+      console.error('Error getting fresh file URL:', error)
+      return null
+    }
+  }
+
   useEffect(() => {
     refreshCompanyFiles()
   }, [])
@@ -351,7 +367,8 @@ export const CompanyFilesProvider: React.FC<CompanyFilesProviderProps> = ({ chil
       refreshCompanyFiles,
       createFolder,
       renameFolder,
-      deleteFolder
+      deleteFolder,
+      getFreshFileUrl
     }}>
       {children}
     </CompanyFilesContext.Provider>
